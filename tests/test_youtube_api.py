@@ -107,6 +107,22 @@ class TestLowLevelAPI:
         result = stream._api_list_my_streams(mock_youtube)
         assert result == []
 
+    # -- _api_list_my_broadcasts -----------------------------------------------
+
+    def test_api_list_my_broadcasts_returns_items(self, mock_youtube):
+        """Returns the items list from the broadcasts response."""
+        mock_youtube.liveBroadcasts().list().execute.return_value = {
+            "items": [{"id": "b1", "status": {"lifeCycleStatus": "live"}}]
+        }
+        result = stream._api_list_my_broadcasts(mock_youtube)
+        assert result == [{"id": "b1", "status": {"lifeCycleStatus": "live"}}]
+
+    def test_api_list_my_broadcasts_empty(self, mock_youtube):
+        """Returns an empty list when no broadcasts are present."""
+        mock_youtube.liveBroadcasts().list().execute.return_value = {"items": []}
+        result = stream._api_list_my_broadcasts(mock_youtube)
+        assert result == []
+
     # -- _api_get_video_snippet ----------------------------------------------
 
     def test_api_get_video_snippet_found(self, mock_youtube):
@@ -288,42 +304,113 @@ class TestHighLevelOrchestration:
     # -- ensure_broadcast_live -----------------------------------------------
 
     @patch("stream._api_get_broadcast_lifecycle")
-    def test_ensure_broadcast_live_already_live(self, mock_lifecycle, mock_logger):
+    def test_ensure_broadcast_live_already_live(self, mock_lifecycle, mock_logger, sample_config):
         """No transition when the broadcast is already live."""
         mock_lifecycle.return_value = "live"
         with patch("stream.transition_to_live") as mock_trans:
-            stream.ensure_broadcast_live(MagicMock(), "bid", mock_logger)
+            stream.ensure_broadcast_live(MagicMock(), "bid", sample_config, mock_logger)
             mock_trans.assert_not_called()
 
     @patch("stream.transition_to_live")
     @patch("stream._api_get_broadcast_lifecycle")
-    def test_ensure_broadcast_live_ready(self, mock_lifecycle, mock_trans, mock_logger):
+    def test_ensure_broadcast_live_ready(self, mock_lifecycle, mock_trans, mock_logger, sample_config):
         """Calls transition_to_live when status is 'ready'."""
         mock_lifecycle.return_value = "ready"
-        stream.ensure_broadcast_live(MagicMock(), "bid", mock_logger)
+        stream.ensure_broadcast_live(MagicMock(), "bid", sample_config, mock_logger)
         mock_trans.assert_called_once()
 
     @patch("stream._api_transition_broadcast")
     @patch("stream._api_get_broadcast_lifecycle")
     def test_ensure_broadcast_live_testing(
-        self, mock_lifecycle, mock_transition, mock_logger
+        self, mock_lifecycle, mock_transition, mock_logger, sample_config
     ):
         """Transitions directly to live when status is 'testing'."""
         mock_lifecycle.return_value = "testing"
         yt = MagicMock()
-        stream.ensure_broadcast_live(yt, "bid", mock_logger)
+        stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
         mock_transition.assert_called_once_with(yt, "bid", "live")
 
+    @patch("stream.transition_to_live")
+    @patch("stream._create_fresh_broadcast", return_value="new-bid")
     @patch("stream._api_get_broadcast_lifecycle")
-    def test_ensure_broadcast_live_complete_raises(self, mock_lifecycle, mock_logger):
-        """Raises RuntimeError when broadcast is complete."""
+    def test_ensure_broadcast_live_complete_creates_new(
+        self, mock_lifecycle, mock_create, mock_trans, mock_logger, sample_config
+    ):
+        """Creates a new broadcast and transitions to live when status is 'complete'."""
         mock_lifecycle.return_value = "complete"
-        with pytest.raises(RuntimeError):
-            stream.ensure_broadcast_live(MagicMock(), "bid", mock_logger)
+        yt = MagicMock()
+        stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
+        mock_create.assert_called_once_with(yt, sample_config, mock_logger)
+        mock_trans.assert_called_once_with(yt, "new-bid", mock_logger)
 
     @patch("stream._api_get_broadcast_lifecycle")
-    def test_ensure_broadcast_live_unknown_raises(self, mock_lifecycle, mock_logger):
+    def test_ensure_broadcast_live_unknown_raises(self, mock_lifecycle, mock_logger, sample_config):
         """Raises RuntimeError for an unexpected lifecycle status."""
         mock_lifecycle.return_value = "revoked"
         with pytest.raises(RuntimeError):
-            stream.ensure_broadcast_live(MagicMock(), "bid", mock_logger)
+            stream.ensure_broadcast_live(MagicMock(), "bid", sample_config, mock_logger)
+
+    # -- cleanup_orphaned_broadcasts -----------------------------------------
+
+    @patch("stream._api_transition_broadcast")
+    @patch("stream._api_list_my_broadcasts")
+    def test_cleanup_orphaned_broadcasts_completes_orphans(
+        self, mock_list, mock_trans, mock_logger
+    ):
+        """Orphaned live broadcasts are transitioned to complete."""
+        def list_by_filter(youtube, status_filter=None):
+            if status_filter == "active":
+                return [
+                    {"id": "orphan-1", "status": {"lifeCycleStatus": "live"}},
+                    {"id": "current", "status": {"lifeCycleStatus": "live"}},
+                ]
+            return []
+
+        mock_list.side_effect = list_by_filter
+        yt = MagicMock()
+        stream.cleanup_orphaned_broadcasts(yt, "current", mock_logger)
+        mock_trans.assert_called_once_with(yt, "orphan-1", "complete")
+
+    @patch("stream._api_transition_broadcast")
+    @patch("stream._api_list_my_broadcasts")
+    def test_cleanup_orphaned_broadcasts_skips_current(
+        self, mock_list, mock_trans, mock_logger
+    ):
+        """The current broadcast is never completed."""
+        mock_list.return_value = [
+            {"id": "current", "status": {"lifeCycleStatus": "live"}},
+        ]
+        stream.cleanup_orphaned_broadcasts(MagicMock(), "current", mock_logger)
+        mock_trans.assert_not_called()
+
+    @patch("stream._api_transition_broadcast")
+    @patch("stream._api_list_my_broadcasts")
+    def test_cleanup_orphaned_broadcasts_no_orphans(
+        self, mock_list, mock_trans, mock_logger
+    ):
+        """No transitions when there are no orphaned broadcasts."""
+        mock_list.return_value = []
+        stream.cleanup_orphaned_broadcasts(MagicMock(), "current", mock_logger)
+        mock_trans.assert_not_called()
+
+    @patch("stream._api_list_my_broadcasts")
+    def test_cleanup_orphaned_broadcasts_handles_api_error(
+        self, mock_list, mock_logger
+    ):
+        """API errors during listing are logged and do not crash."""
+        mock_list.side_effect = Exception("API error")
+        stream.cleanup_orphaned_broadcasts(MagicMock(), "current", mock_logger)
+        mock_logger.warn.assert_called()
+
+    @patch("stream._api_transition_broadcast")
+    @patch("stream._api_list_my_broadcasts")
+    def test_cleanup_orphaned_broadcasts_handles_transition_error(
+        self, mock_list, mock_trans, mock_logger
+    ):
+        """Transition errors for individual orphans are logged, not raised."""
+        mock_list.return_value = [
+            {"id": "orphan-1", "status": {"lifeCycleStatus": "live"}},
+        ]
+        mock_trans.side_effect = Exception("transition failed")
+        stream.cleanup_orphaned_broadcasts(MagicMock(), "current", mock_logger)
+        mock_logger.warn.assert_called()
