@@ -199,6 +199,27 @@ class TestCompleteBroadcast:
         mock_logger.warn.assert_called_once()
 
 
+class TestCleanupOrphanedBroadcastsSafely:
+    def test_cleanup_calls_cleanup_function(self, sample_config, mock_logger):
+        """Authenticates and calls cleanup_orphaned_broadcasts."""
+        mock_creds = MagicMock()
+        mock_youtube = MagicMock()
+
+        with patch("stream.get_valid_credentials", return_value=mock_creds), \
+             patch("stream.build_youtube_service", return_value=mock_youtube), \
+             patch("stream.cleanup_orphaned_broadcasts") as mock_cleanup:
+            stream._cleanup_orphaned_broadcasts_safely(sample_config, mock_logger)
+
+        mock_cleanup.assert_called_once_with(mock_youtube, "bcast-123", mock_logger)
+
+    def test_cleanup_handles_auth_error(self, sample_config, mock_logger):
+        """Authentication errors are logged, not raised."""
+        with patch("stream.get_valid_credentials", side_effect=Exception("auth failed")):
+            stream._cleanup_orphaned_broadcasts_safely(sample_config, mock_logger)
+
+        mock_logger.warn.assert_called_once()
+
+
 class TestCreateFreshBroadcast:
     def test_create_fresh_broadcast(self, tmp_script_dir, sample_config, mock_logger):
         """Creates a new broadcast, binds stream, saves config, returns new ID."""

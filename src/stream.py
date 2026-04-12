@@ -424,6 +424,19 @@ def _api_get_broadcast_lifecycle(youtube, broadcast_id):
     return items[0]["status"]["lifeCycleStatus"] if items else None
 
 
+def _api_list_my_broadcasts(youtube, status_filter=None):
+    """Call liveBroadcasts.list with mine=True and return the items list.
+
+    If status_filter is given (e.g. 'active'), only broadcasts with that
+    broadcastStatus are returned.
+    """
+    kwargs = {"part": "id,status", "mine": True, "maxResults": 50}
+    if status_filter:
+        kwargs["broadcastStatus"] = status_filter
+    resp = youtube.liveBroadcasts().list(**kwargs).execute()
+    return resp.get("items", [])
+
+
 def _api_list_my_streams(youtube):
     """Call liveStreams.list with mine=True and return the items list."""
     resp = youtube.liveStreams().list(part="cdn", mine=True).execute()
@@ -591,6 +604,32 @@ def transition_to_live(youtube, broadcast_id, logger):
     logger.info(f"Transitioning broadcast {broadcast_id} → live")
     _api_transition_broadcast(youtube, broadcast_id, "live")
     logger.info("Broadcast is LIVE")
+
+
+def cleanup_orphaned_broadcasts(youtube, current_broadcast_id, logger):
+    """Complete any orphaned broadcasts left behind by previous crashes.
+
+    Queries for active broadcasts and transitions any that are not the current
+    broadcast to complete, freeing up YouTube's per-channel broadcast slots.
+    """
+    for status_filter in ("active", "live"):
+        try:
+            items = _api_list_my_broadcasts(youtube, status_filter)
+        except Exception as exc:
+            logger.warn(f"Could not list {status_filter} broadcasts: {exc}")
+            continue
+
+        for item in items:
+            bid = item["id"]
+            if bid == current_broadcast_id:
+                continue
+            lifecycle = item.get("status", {}).get("lifeCycleStatus", "")
+            if lifecycle in ("live", "ready", "testing", "created"):
+                try:
+                    _api_transition_broadcast(youtube, bid, "complete")
+                    logger.info(f"Completed orphaned broadcast: {bid} (was {lifecycle})")
+                except Exception as exc:
+                    logger.warn(f"Could not complete orphaned broadcast {bid}: {exc}")
 
 
 def _create_fresh_broadcast(youtube, config, logger):
@@ -1414,6 +1453,17 @@ def _perform_shutdown(config, logger):
     logger.close()
 
 
+def _cleanup_orphaned_broadcasts_safely(config, logger):
+    """Authenticate and clean up orphaned broadcasts, logging any errors."""
+    try:
+        creds = get_valid_credentials(config, logger)
+        youtube = build_youtube_service(creds)
+        broadcast_id = config["youtube"].get("broadcastId", "")
+        cleanup_orphaned_broadcasts(youtube, broadcast_id, logger)
+    except Exception as exc:
+        logger.warn(f"Orphaned broadcast cleanup failed: {exc}")
+
+
 def do_start():
     """Start the RTSP-to-YouTube stream with automatic retry on failure."""
     global _config
@@ -1432,6 +1482,7 @@ def do_start():
     logger.info(f"BC Free Flight Stream {__version__}")
     logger.info(f"Stream process started (PID {os.getpid()})")
 
+    _cleanup_orphaned_broadcasts_safely(config, logger)
     _run_stream_loop(config, logger, res)
     _perform_shutdown(config, logger)
 

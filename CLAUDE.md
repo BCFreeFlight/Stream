@@ -211,9 +211,10 @@ The stream resource (RTMP URL and stream key) is created **once** during `--inst
 
 ### During `--start`:
 1. Read `broadcastId`, `streamURL`, `streamKey` from config
-2. If the broadcast is in `complete` state, automatically create a new one, bind the existing stream, and update `config.toml`
-3. Update the broadcast title with today's date via `liveBroadcasts.update`
-4. Launch ffmpeg pointing at the RTMP URL
+2. Clean up orphaned broadcasts — query `liveBroadcasts.list` for any broadcasts in `live`, `ready`, `testing`, or `created` state and transition them to `complete`
+3. If the current broadcast is in `complete` state, automatically create a new one, bind the existing stream, and update `config.toml`
+4. Update the broadcast title with today's date via `liveBroadcasts.update`
+5. Launch ffmpeg pointing at the RTMP URL
 5. Wait for stream to become active
 6. If broadcast is not already live: `liveBroadcasts.transition` → `testing` → `live`
 7. If broadcast is already live: skip transition, just stream
