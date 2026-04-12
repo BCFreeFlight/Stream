@@ -91,7 +91,7 @@ Every config key must be **used** by the script. Do not add dead config fields. 
     "mute": false
   },
   "youtube": {
-    "broadcastTitle": "Coopers Launch: {date}",
+    "broadcastTitle": "My Location: {date}",
     "privacy": "public",
     "categoryId": "22",
     "enableMonitorStream": false,

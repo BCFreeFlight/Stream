@@ -137,7 +137,7 @@ Prompt for every value in `config.json` and `.env` in a logical order:
 4. `stream.videoCodec` — default `copy`
 5. `stream.audioCodec` — default `copy`
 6. `stream.mute` — yes/no, default `no`
-7. `youtube.broadcastTitle` — default `Coopers Launch: {date}`
+7. `youtube.broadcastTitle` — default `My Location: {date}`
 8. `youtube.privacy` — public/unlisted/private, default `public`
 9. `youtube.categoryId` — default `22`
 10. `youtube.broadcastId` — existing broadcast ID, or empty to auto-create
@@ -177,7 +177,7 @@ All non-secret configuration. Every key must be read and used by the script.
     "mute": false
   },
   "youtube": {
-    "broadcastTitle": "Coopers Launch: {date}",
+    "broadcastTitle": "My Location: {date}",
     "privacy": "public",
     "categoryId": "22",
     "enableMonitorStream": false,

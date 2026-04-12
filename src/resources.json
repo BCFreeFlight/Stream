@@ -54,9 +54,9 @@
       "  Use {date} anywhere in the title to insert today's date (ISO format).",
       "",
       "  Examples:",
-      "    Coopers Launch: {date}     =>  Coopers Launch: 2026-04-12",
+      "    My Launch: {date}          =>  My Launch: 2026-04-12",
       "    My Stream ({date})         =>  My Stream (2026-04-12)",
-      "    Live Cam                   =>  Live Cam  (no date)",
+      "    Live Cam                   =>  Live Cam",
       ""
     ],
 
@@ -97,7 +97,7 @@
       "videoCodec": "copy",
       "audioCodec": "copy",
       "mute": "yes",
-      "broadcastTitle": "Coopers Launch: {date}",
+      "broadcastTitle": "My Location: {date}",
       "privacy": "public",
       "categoryId": "22",
       "broadcastId": "",

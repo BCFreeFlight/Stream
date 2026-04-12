@@ -61,7 +61,7 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `stream.videoCodec` | string | `copy` | ffmpeg video codec |
 | `stream.audioCodec` | string | `copy` | ffmpeg audio codec |
 | `stream.mute` | boolean | `false` | If `true`, audio is stripped (`-an`) |
-| `youtube.broadcastTitle` | string | `Coopers Launch: {date}` | Title template; `{date}` resolves to the current ISO date |
+| `youtube.broadcastTitle` | string | `My Location: {date}` | Title template; `{date}` resolves to the current ISO date |
 | `youtube.privacy` | string | `public` | Broadcast privacy: `public`, `unlisted`, or `private` |
 | `youtube.categoryId` | string | `22` | YouTube category ID (22 = People & Blogs) |
 | `youtube.enableMonitorStream` | boolean | `false` | Enable the YouTube monitor stream |
