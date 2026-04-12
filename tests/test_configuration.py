@@ -4,6 +4,12 @@ import json
 import os
 from unittest.mock import patch, MagicMock
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+import tomli_w
+
 import stream
 
 
@@ -11,17 +17,17 @@ import stream
 
 
 class TestLoadConfig:
-    def test_load_config_reads_json(self, tmp_script_dir, sample_config):
-        """Writing config.json then calling load_config returns the same dict."""
-        config_path = tmp_script_dir / "config.json"
-        with open(config_path, "w") as fh:
-            json.dump(sample_config, fh)
+    def test_load_config_reads_toml(self, tmp_script_dir, sample_config):
+        """Writing config.toml then calling load_config returns the same dict."""
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
 
         result = stream.load_config()
         assert result == sample_config
 
     def test_load_config_missing_file_raises(self, tmp_script_dir):
-        """load_config raises FileNotFoundError when config.json does not exist."""
+        """load_config raises FileNotFoundError when config.toml does not exist."""
         import pytest
 
         with pytest.raises(FileNotFoundError):
@@ -32,15 +38,25 @@ class TestLoadConfig:
 
 
 class TestSaveConfig:
-    def test_save_config_writes_json(self, tmp_script_dir, sample_config):
-        """save_config writes a valid JSON file that can be read back."""
+    def test_save_config_writes_toml(self, tmp_script_dir, sample_config):
+        """save_config writes a valid TOML file that can be read back."""
         stream.save_config(sample_config)
 
-        config_path = tmp_script_dir / "config.json"
-        with open(config_path, "r") as fh:
-            result = json.load(fh)
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "rb") as fh:
+            result = tomllib.load(fh)
 
         assert result == sample_config
+
+    def test_save_config_includes_comments(self, tmp_script_dir, sample_config):
+        """save_config writes TOML with inline comments."""
+        stream.save_config(sample_config)
+
+        config_path = tmp_script_dir / "config.toml"
+        content = config_path.read_text()
+
+        assert "# Path to the PID file" in content
+        assert "# Google OAuth 2.0 credentials" in content
 
     def test_save_config_overwrites(self, tmp_script_dir, sample_config):
         """Calling save_config twice keeps only the second value."""
@@ -49,9 +65,9 @@ class TestSaveConfig:
         sample_config["google"]["clientId"] = "overwritten-id"
         stream.save_config(sample_config)
 
-        config_path = tmp_script_dir / "config.json"
-        with open(config_path, "r") as fh:
-            result = json.load(fh)
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "rb") as fh:
+            result = tomllib.load(fh)
 
         assert result["google"]["clientId"] == "overwritten-id"
 
@@ -98,28 +114,28 @@ class TestReleaseAssetUrl:
     def test_release_asset_url_dev(self):
         """Dev builds use the 'latest' download URL."""
         with patch.object(stream, "__version__", "dev"):
-            url = stream._release_asset_url("resources.json")
+            url = stream._release_asset_url("resources.toml")
 
-        assert "/releases/latest/download/resources.json" in url
+        assert "/releases/latest/download/resources.toml" in url
         assert stream.GITHUB_REPO in url
 
     def test_release_asset_url_tagged(self):
         """Tagged releases use the version-specific download URL."""
         with patch.object(stream, "__version__", "v0.1.5"):
-            url = stream._release_asset_url("resources.json")
+            url = stream._release_asset_url("resources.toml")
 
-        assert "/releases/download/v0.1.5/resources.json" in url
+        assert "/releases/download/v0.1.5/resources.toml" in url
         assert stream.GITHUB_REPO in url
 
 
 class TestEnsureReleaseAsset:
     def test_returns_existing_file(self, tmp_script_dir):
         """When the file already exists, returns its path without downloading."""
-        path = tmp_script_dir / "resources.json"
+        path = tmp_script_dir / "resources.toml"
         path.write_text('{"existing": true}')
 
         with patch("urllib.request.urlretrieve") as mock_retrieve:
-            result = stream._ensure_release_asset("resources.json")
+            result = stream._ensure_release_asset("resources.toml")
 
         mock_retrieve.assert_not_called()
         assert result == path
@@ -131,40 +147,40 @@ class TestEnsureReleaseAsset:
 
         with patch("urllib.request.urlretrieve") as mock_retrieve:
             mock_retrieve.side_effect = lambda url, dest: open(dest, 'w').close()
-            result = stream._ensure_release_asset("resources.json")
+            result = stream._ensure_release_asset("resources.toml")
 
         mock_retrieve.assert_called_once()
         url_arg = mock_retrieve.call_args[0][0]
-        assert "resources.json" in url_arg
-        assert result == tmp_script_dir / "resources.json"
+        assert "resources.toml" in url_arg
+        assert result == tmp_script_dir / "resources.toml"
 
     def test_downloads_from_version_url(self, tmp_script_dir):
         """Downloaded URL matches the current __version__."""
         with patch.object(stream, "__version__", "v0.2.0"), \
              patch("urllib.request.urlretrieve") as mock_retrieve:
             mock_retrieve.side_effect = lambda url, dest: open(dest, 'w').close()
-            stream._ensure_release_asset("resources.json")
+            stream._ensure_release_asset("resources.toml")
 
         url_arg = mock_retrieve.call_args[0][0]
-        assert "/releases/download/v0.2.0/resources.json" in url_arg
+        assert "/releases/download/v0.2.0/resources.toml" in url_arg
 
 
 class TestLoadResources:
-    def test_load_resources_reads_json(self, tmp_script_dir):
-        """load_resources reads and parses resources.json from SCRIPT_DIR."""
+    def test_load_resources_reads_toml(self, tmp_script_dir):
+        """load_resources reads and parses resources.toml from SCRIPT_DIR."""
         resources_data = {"install": {"header": "test"}, "errors": {}}
-        resources_path = tmp_script_dir / "resources.json"
-        with open(resources_path, "w") as fh:
-            json.dump(resources_data, fh)
+        resources_path = tmp_script_dir / "resources.toml"
+        with open(resources_path, "wb") as fh:
+            tomli_w.dump(resources_data, fh)
 
         result = stream.load_resources()
         assert result == resources_data
 
     def test_load_resources_downloads_when_missing(self, tmp_script_dir, sample_resources):
-        """load_resources auto-downloads resources.json when it is absent."""
+        """load_resources auto-downloads resources.toml when it is absent."""
         def fake_download(url, dest):
-            with open(dest, "w") as fh:
-                json.dump(sample_resources, fh)
+            with open(dest, "wb") as fh:
+                tomli_w.dump(sample_resources, fh)
 
         with patch("urllib.request.urlretrieve", side_effect=fake_download):
             result = stream.load_resources()
@@ -206,8 +222,17 @@ class TestGetNested:
 
 
 class TestTryLoadExistingConfig:
-    def test_try_load_existing_config_present(self, tmp_script_dir, sample_config):
-        """Returns the parsed dict when config.json exists and is valid."""
+    def test_try_load_existing_config_toml(self, tmp_script_dir, sample_config):
+        """Returns the parsed dict when config.toml exists and is valid."""
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        result = stream._try_load_existing_config()
+        assert result == sample_config
+
+    def test_try_load_existing_config_json_fallback(self, tmp_script_dir, sample_config):
+        """Falls back to config.json when config.toml is absent (migration)."""
         config_path = tmp_script_dir / "config.json"
         with open(config_path, "w") as fh:
             json.dump(sample_config, fh)
@@ -216,14 +241,14 @@ class TestTryLoadExistingConfig:
         assert result == sample_config
 
     def test_try_load_existing_config_missing(self, tmp_script_dir):
-        """Returns None when config.json does not exist."""
+        """Returns None when neither config file exists."""
         result = stream._try_load_existing_config()
         assert result is None
 
     def test_try_load_existing_config_corrupt(self, tmp_script_dir):
-        """Returns None when config.json contains invalid JSON."""
-        config_path = tmp_script_dir / "config.json"
-        config_path.write_text("{not valid json!!!")
+        """Returns None when config.toml contains invalid TOML."""
+        config_path = tmp_script_dir / "config.toml"
+        config_path.write_text("[not valid toml!!!")
 
         result = stream._try_load_existing_config()
         assert result is None

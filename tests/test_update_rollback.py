@@ -5,6 +5,12 @@ import zipfile
 from pathlib import Path
 from urllib.error import URLError
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+import tomli_w
+
 import stream
 from unittest.mock import MagicMock, patch
 
@@ -16,7 +22,8 @@ class TestBackup:
     def test_backup_creates_zip(self, tmp_script_dir, sample_resources):
         """_backup_current_files() creates a zip file in the backup/ subdirectory."""
         (tmp_script_dir / "stream.py").write_text("# stream")
-        (tmp_script_dir / "resources.json").write_text(json.dumps(sample_resources))
+        with open(tmp_script_dir / "resources.toml", "wb") as fh:
+            tomli_w.dump(sample_resources, fh)
 
         backup_path = stream._backup_current_files()
 
@@ -25,21 +32,23 @@ class TestBackup:
         assert backup_path.parent == tmp_script_dir / "backup"
 
     def test_backup_zip_contains_files(self, tmp_script_dir, sample_resources):
-        """The backup zip contains both stream.py and resources.json."""
+        """The backup zip contains both stream.py and resources.toml."""
         (tmp_script_dir / "stream.py").write_text("# stream")
-        (tmp_script_dir / "resources.json").write_text(json.dumps(sample_resources))
+        with open(tmp_script_dir / "resources.toml", "wb") as fh:
+            tomli_w.dump(sample_resources, fh)
 
         backup_path = stream._backup_current_files()
 
         with zipfile.ZipFile(backup_path, "r") as zf:
             names = zf.namelist()
             assert "stream.py" in names
-            assert "resources.json" in names
+            assert "resources.toml" in names
 
     def test_backup_version_in_filename(self, tmp_script_dir, sample_resources):
         """The backup filename contains the current __version__."""
         (tmp_script_dir / "stream.py").write_text("# stream")
-        (tmp_script_dir / "resources.json").write_text(json.dumps(sample_resources))
+        with open(tmp_script_dir / "resources.toml", "wb") as fh:
+            tomli_w.dump(sample_resources, fh)
 
         with patch.object(stream, "__version__", "v0.1.5"):
             backup_path = stream._backup_current_files()
@@ -49,7 +58,8 @@ class TestBackup:
     def test_backup_sanitizes_slashes(self, tmp_script_dir, sample_resources):
         """Slashes in __version__ are replaced with underscores in the filename."""
         (tmp_script_dir / "stream.py").write_text("# stream")
-        (tmp_script_dir / "resources.json").write_text(json.dumps(sample_resources))
+        with open(tmp_script_dir / "resources.toml", "wb") as fh:
+            tomli_w.dump(sample_resources, fh)
 
         with patch.object(stream, "__version__", "feat/test"):
             backup_path = stream._backup_current_files()
@@ -140,7 +150,7 @@ class TestDoUpdate:
     def test_do_update_success(self, tmp_script_dir, sample_resources):
         """When a newer version exists, backup and download are called."""
         (tmp_script_dir / "stream.py").write_text("# old")
-        (tmp_script_dir / "resources.json").write_text("{}")
+        (tmp_script_dir / "resources.toml").write_text("")
 
         with patch.object(stream, "__version__", "v0.1.4"), \
              patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
@@ -152,7 +162,7 @@ class TestDoUpdate:
         mock_backup.assert_called_once()
         download_calls = [call[0][0] for call in mock_download.call_args_list]
         assert "stream.py" in download_calls
-        assert "resources.json" in download_calls
+        assert "resources.toml" in download_calls
 
 
 # ── Rollback — extract version ──────────────────────────────────────────────
@@ -233,20 +243,22 @@ class TestRestoreFromBackup:
         backup_dir = tmp_script_dir / "backup"
         backup_dir.mkdir()
 
+        resources_bytes = tomli_w.dumps({"restored": True}).encode()
         backup_zip = backup_dir / "stream.v0.1.5.bak.zip"
         with zipfile.ZipFile(backup_zip, "w") as zf:
             zf.writestr("stream.py", "# restored content")
-            zf.writestr("resources.json", '{"restored": true}')
+            zf.writestr("resources.toml", resources_bytes)
 
         stream._restore_from_backup(backup_zip)
 
         restored_script = tmp_script_dir / "stream.py"
-        restored_resources = tmp_script_dir / "resources.json"
+        restored_resources = tmp_script_dir / "resources.toml"
 
         assert restored_script.exists()
         assert restored_script.read_text() == "# restored content"
         assert restored_resources.exists()
-        assert json.loads(restored_resources.read_text()) == {"restored": True}
+        with open(restored_resources, "rb") as fh:
+            assert tomllib.load(fh) == {"restored": True}
 
 
 # ── do_rollback ─────────────────────────────────────────────────────────────
@@ -272,7 +284,7 @@ class TestDoRollback:
         backup_zip = backup_dir / "stream.v0.1.5.bak.zip"
         with zipfile.ZipFile(backup_zip, "w") as zf:
             zf.writestr("stream.py", "# v0.1.5 content")
-            zf.writestr("resources.json", '{"version": "v0.1.5"}')
+            zf.writestr("resources.toml", tomli_w.dumps({"version": "v0.1.5"}))
 
         with patch("stream.load_resources", return_value=sample_resources):
             stream.do_rollback("v0.1.5")

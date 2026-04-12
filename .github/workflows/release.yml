@@ -71,7 +71,7 @@ jobs:
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
             src/stream.py \
-            src/resources.json \
+            src/resources.toml \
             --title "${{ steps.version.outputs.tag }}" \
             --notes "${{ steps.notes.outputs.body }}"
         env:
