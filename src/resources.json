@@ -48,6 +48,20 @@
       ""
     ],
 
+    "cron_guide": [
+      "",
+      "  Cron jobs will automatically start and stop your stream on a schedule.",
+      "  A cron expression has five fields: minute, hour, day, month, weekday.",
+      "",
+      "  Examples:",
+      "    30 6 * * *          = every day at 6:30 AM",
+      "    30 6 1-31 4-10 *    = every day at 6:30 AM, April through October",
+      "    0 8 * * 1-5         = weekdays at 8:00 AM",
+      "",
+      "  For help building cron expressions, visit: https://crontab.guru/",
+      ""
+    ],
+
     "prompts": {
       "clientId": "Google OAuth 2.0 Client ID",
       "clientSecret": "Google OAuth 2.0 Client Secret",
@@ -62,6 +76,7 @@
       "streamURL": "YouTube RTMP stream URL",
       "backupStreamUrl": "Backup RTMP stream URL",
       "streamKey": "YouTube stream key",
+      "cronSetup": "Set up automatic cron jobs? (yes/no)",
       "cronStart": "Cron start expression",
       "cronStop": "Cron stop expression"
     },
@@ -98,6 +113,8 @@
       "oauth_saved": "OAuth tokens saved",
       "terminal_detected": "\nTerminal emulator: {terminal}",
       "cron_registered": "Crontab entries registered",
+      "cron_skipped": "Cron setup skipped",
+      "cron_removed": "Existing cron entries removed",
       "broadcast_id_label": "\n  Broadcast ID:  {broadcast_id}",
       "stream_url_label": "  Stream URL:    https://youtube.com/live/{broadcast_id}"
     },

@@ -791,6 +791,15 @@ def register_cron_entries(config, logger=None):
         print(message)
 
 
+def remove_cron_entries():
+    """Remove all bcfreeflight_stream cron entries."""
+    lines = _remove_marker_lines(_read_current_crontab())
+    new_crontab = "\n".join(lines) + "\n" if lines else ""
+    subprocess.run(
+        ["crontab", "-"], input=new_crontab, check=True, capture_output=True, text=True
+    )
+
+
 # ── Interactive Prompts ──────────────────────────────────────────────────────
 
 
@@ -976,18 +985,27 @@ def prompt_all_config_values(res, existing=None):
         default=defaults["backupStreamUrl"],
     )
 
-    # ── Schedule ──
+    # ── Schedule (cron) ──
     print(sections["schedule"])
-    cron_start = _smart_prompt(
-        prompts["cronStart"],
-        _get_nested(ex, "cron", "start"),
-        default=defaults["cronStart"],
+    cron_setup = _prompt(
+        prompts["cronSetup"], default="yes", validator=yes_no_validator
     )
-    cron_stop = _smart_prompt(
-        prompts["cronStop"],
-        _get_nested(ex, "cron", "stop"),
-        default=defaults["cronStop"],
-    )
+    cron_enabled = cron_setup.lower() == "yes"
+
+    cron_start = ""
+    cron_stop = ""
+    if cron_enabled:
+        _show_guide(res["install"]["cron_guide"])
+        cron_start = _smart_prompt(
+            prompts["cronStart"],
+            _get_nested(ex, "cron", "start"),
+            default=defaults["cronStart"],
+        )
+        cron_stop = _smart_prompt(
+            prompts["cronStop"],
+            _get_nested(ex, "cron", "stop"),
+            default=defaults["cronStop"],
+        )
 
     config = {
         "google": {"clientId": client_id},
@@ -1016,7 +1034,11 @@ def prompt_all_config_values(res, existing=None):
         "logRetentionDays": _get_nested(ex, "logRetentionDays", default=15),
         "retryDelaySecs": _get_nested(ex, "retryDelaySecs", default=5),
         "terminal": _get_nested(ex, "terminal", default="gnome-terminal"),
-        "cron": {"start": cron_start, "stop": cron_stop},
+        "cron": {
+            "enabled": cron_enabled,
+            "start": cron_start,
+            "stop": cron_stop,
+        },
     }
     return config, client_secret
 
@@ -1104,8 +1126,11 @@ def _print_install_summary(config, res):
     print(summary["config"].format(path=SCRIPT_DIR / "config.json"))
     print(summary["secrets"].format(path=SCRIPT_DIR / ".env"))
     print(summary["terminal"].format(terminal=config["terminal"]))
-    print(summary["cron_start"].format(schedule=config["cron"]["start"]))
-    print(summary["cron_stop"].format(schedule=config["cron"]["stop"]))
+    if config["cron"].get("enabled"):
+        print(summary["cron_start"].format(schedule=config["cron"]["start"]))
+        print(summary["cron_stop"].format(schedule=config["cron"]["stop"]))
+    else:
+        print("  Cron:          disabled")
     print(summary["youtube_url"].format(broadcast_id=yt["broadcastId"]))
     print(summary["run_hint"])
 
@@ -1137,7 +1162,13 @@ def do_install():
     save_config(config)
     print(res["install"]["messages"]["terminal_detected"].format(terminal=terminal))
 
-    register_cron_entries(config)
+    msgs = res["install"]["messages"]
+    if config["cron"].get("enabled"):
+        register_cron_entries(config)
+    else:
+        remove_cron_entries()
+        print(msgs["cron_skipped"])
+
     _print_install_summary(config, res)
 
 

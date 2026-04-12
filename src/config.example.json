@@ -26,6 +26,7 @@
   "retryDelaySecs": 5,
   "terminal": "gnome-terminal",
   "cron": {
+    "enabled": true,
     "start": "30 6 1-31 4-10 *",
     "stop": "25 18 1-31 4-10 *"
   }
