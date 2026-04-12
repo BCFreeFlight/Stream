@@ -1,10 +1,15 @@
 """Shared pytest fixtures for bcfreeflight_stream tests."""
 
 import copy
-import json
 
 import pytest
 from unittest.mock import MagicMock
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+import tomli_w
 
 
 # ── Module Import ────────────────────────────────────────────────────────────
@@ -84,12 +89,12 @@ def sample_config():
 
 @pytest.fixture(scope="session")
 def sample_resources(stream):
-    """Read and return the parsed contents of src/resources.json."""
+    """Read and return the parsed contents of src/resources.toml."""
     import pathlib
 
-    resources_path = pathlib.Path(__file__).resolve().parent.parent / "src" / "resources.json"
-    with open(resources_path, "r") as fh:
-        return json.load(fh)
+    resources_path = pathlib.Path(__file__).resolve().parent.parent / "src" / "resources.toml"
+    with open(resources_path, "rb") as fh:
+        return tomllib.load(fh)
 
 
 # ── Mock Objects ─────────────────────────────────────────────────────────────
@@ -147,10 +152,10 @@ def mock_youtube():
 
 @pytest.fixture
 def config_on_disk(tmp_script_dir, sample_config):
-    """Write sample_config as config.json in the temp script directory."""
-    path = tmp_script_dir / "config.json"
-    with open(path, "w") as fh:
-        json.dump(sample_config, fh, indent=2)
+    """Write sample_config as config.toml in the temp script directory."""
+    path = tmp_script_dir / "config.toml"
+    with open(path, "wb") as fh:
+        tomli_w.dump(sample_config, fh)
     return path
 
 

@@ -17,6 +17,8 @@ All Python packages are self-installed by `stream.py` on first run. No `requirem
 | `google-api-python-client` | YouTube Data API v3 client for broadcast/stream management |
 | `python-dotenv` | Loads secrets from `.env` file into environment variables |
 | `requests` | HTTP transport used internally by `google-auth` |
+| `tomli` | TOML parser for Python < 3.11 (built-in as `tomllib` in 3.11+) |
+| `tomli-w` | TOML writer for generating config files |
 
 ## External Services
 
@@ -30,7 +32,7 @@ These files are generated locally beside `stream.py` and must never be committed
 
 | File | Created by | Purpose |
 |------|-----------|---------|
-| `config.json` | `--install` | All non-secret configuration |
+| `config.toml` | `--install` | All non-secret configuration |
 | `.env` | `--install` | Secrets and auto-refreshed tokens |
 | `stream.pid` | `--start` | PID of the running stream process |
 | `stream.stop` | `--stop` / signal handler | Sentinel that suppresses retries |

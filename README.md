@@ -21,7 +21,7 @@ Open a terminal, `cd` to the directory where you want the script to live, and ru
 curl -fLO https://github.com/BCFreeFlight/Stream/releases/latest/download/stream.py && python3 stream.py --install
 ```
 
-This downloads the latest release and launches the interactive setup wizard. Any companion files (like `resources.json`) are downloaded automatically on first run.
+This downloads the latest release and launches the interactive setup wizard. Any companion files (like `resources.toml`) are downloaded automatically on first run.
 
 ## Installation (step by step)
 
@@ -43,7 +43,7 @@ This downloads the latest release and launches the interactive setup wizard. Any
    - Install required Python packages
    - Open a browser for Google OAuth 2.0 authorization
    - Create a YouTube broadcast and stream (or use ones you provide)
-   - Write `config.json` and `.env` beside the script
+   - Write `config.toml` and `.env` beside the script
    - Detect your terminal emulator and register cron jobs
    - Print the stable YouTube URL for your stream
 
@@ -60,9 +60,9 @@ This downloads the latest release and launches the interactive setup wizard. Any
 
 ## Configuration Reference
 
-### config.json
+### config.toml
 
-All non-secret configuration. Created by `--install` beside the script. See [`config.example.json`](src/config.example.json) for the template.
+All non-secret configuration. Created by `--install` beside the script. See [`config.example.toml`](src/config.example.toml) for the template.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -131,7 +131,7 @@ Re-running `--install` overwrites configuration and creates new YouTube resource
 python3 stream.py --update
 ```
 
-Backs up the current `stream.py` and `resources.json` into a versioned zip in the `backup/` directory (e.g., `backup/stream.v0.1.3.bak.zip`), then downloads and replaces both files from the latest GitHub release.
+Backs up the current `stream.py` and `resources.toml` into a versioned zip in the `backup/` directory (e.g., `backup/stream.v0.1.3.bak.zip`), then downloads and replaces both files from the latest GitHub release.
 
 ### Roll back to a previous version
 

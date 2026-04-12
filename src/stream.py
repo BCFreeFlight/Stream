@@ -32,7 +32,10 @@ def _ensure_dependencies():
         ("googleapiclient", "google-api-python-client"),
         ("dotenv", "python-dotenv"),
         ("requests", "requests"),
+        ("tomli_w", "tomli-w"),
     ]
+    if sys.version_info < (3, 11):
+        required.append(("tomli", "tomli"))
     missing = [pkg for mod, pkg in required if not _can_import(mod)]
     if missing:
         subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing)
@@ -62,6 +65,12 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build as build_service
 from googleapiclient.errors import HttpError
+import tomli_w
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 # ── Constants & Types ────────────────────────────────────────────────────────
 
@@ -94,15 +103,48 @@ _stop_requested = False
 
 
 def load_config():
-    """Read and return the config.json file from the script directory."""
-    with open(SCRIPT_DIR / "config.json", "r") as fh:
-        return json.load(fh)
+    """Read and return the config.toml file from the script directory."""
+    with open(SCRIPT_DIR / "config.toml", "rb") as fh:
+        return tomllib.load(fh)
+
+
+CONFIG_COMMENTS = {
+    "pidFile": "# Path to the PID file written when --start is running",
+    "stopSentinel": "# Sentinel file whose presence tells the retry loop to stop",
+    "logDir": "# Directory for daily log files",
+    "logRetentionDays": "# Delete log files older than this many days",
+    "retryDelaySecs": "# Seconds to wait between retry attempts when ffmpeg exits",
+    "terminal": "# Terminal emulator used by the start cron job (auto-detected)",
+    "[google]": "# Google OAuth 2.0 credentials — get these from the Cloud Console",
+    "[stream]": "# RTSP camera source and ffmpeg codec settings",
+    "[youtube]": "# YouTube broadcast and stream configuration",
+    "broadcastTitle": '# Title template — {date} is replaced with today\'s date (e.g. "My Location: 2026-04-12")',
+    "privacy": "# Broadcast privacy: public, unlisted, or private",
+    "categoryId": '# YouTube category ID (22 = "People & Blogs")',
+    "enableMonitorStream": "# Enable the YouTube monitor stream",
+    "broadcastId": "# Persistent broadcast ID — created by --install, reused by --start",
+    "streamId": "# YouTube stream resource ID",
+    "streamURL": "# Primary RTMP ingest URL",
+    "backupStreamUrl": "# Backup RTMP ingest URL — used on odd-numbered retry attempts",
+    "streamKey": "# Stream key for the RTMP URL",
+    "[cron]": "# Cron schedule for automatic start/stop (crontab expressions)",
+}
 
 
 def save_config(config):
-    """Write config.json to the script directory."""
-    with open(SCRIPT_DIR / "config.json", "w") as fh:
-        json.dump(config, fh, indent=2)
+    """Write config.toml to the script directory with inline comments."""
+    raw = tomli_w.dumps(config)
+    lines = raw.splitlines()
+    commented = []
+    for line in lines:
+        key = line.split("=")[0].strip() if "=" in line else line.strip()
+        comment = CONFIG_COMMENTS.get(key)
+        if comment:
+            if commented:
+                commented.append("")
+            commented.append(comment)
+        commented.append(line)
+    (SCRIPT_DIR / "config.toml").write_text("\n".join(commented) + "\n")
 
 
 def load_env():
@@ -146,10 +188,10 @@ def _ensure_release_asset(filename):
 
 
 def load_resources():
-    """Load user-facing strings from resources.json, downloading if missing."""
-    _ensure_release_asset("resources.json")
-    with open(SCRIPT_DIR / "resources.json", "r") as fh:
-        return json.load(fh)
+    """Load user-facing strings from resources.toml, downloading if missing."""
+    _ensure_release_asset("resources.toml")
+    with open(SCRIPT_DIR / "resources.toml", "rb") as fh:
+        return tomllib.load(fh)
 
 
 # ── Logging ──────────────────────────────────────────────────────────────────
@@ -868,7 +910,7 @@ def _make_validator(check_fn, error_msg):
 
 
 def _show_guide(lines):
-    """Print a multi-line guide from resources.json."""
+    """Print a multi-line guide from resources.toml."""
     for line in lines:
         print(line)
 
@@ -886,15 +928,28 @@ def _smart_prompt(label, current, default=None, guide=None, validator=None):
 
 
 def _try_load_existing_config():
-    """Load existing config.json if present, or return None."""
-    path = SCRIPT_DIR / "config.json"
-    if not path.exists():
-        return None
-    try:
-        with open(path, "r") as fh:
-            return json.load(fh)
-    except (json.JSONDecodeError, OSError):
-        return None
+    """Load existing config if present, or return None.
+
+    Tries config.toml first, then falls back to config.json for migration
+    from older versions.
+    """
+    toml_path = SCRIPT_DIR / "config.toml"
+    if toml_path.exists():
+        try:
+            with open(toml_path, "rb") as fh:
+                return tomllib.load(fh)
+        except (ValueError, OSError):
+            return None
+
+    json_path = SCRIPT_DIR / "config.json"
+    if json_path.exists():
+        try:
+            with open(json_path, "r") as fh:
+                return json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    return None
 
 
 def _get_nested(config, *keys, default=""):
@@ -914,7 +969,7 @@ def prompt_all_config_values(res, existing=None):
     Empty values trigger a prompt, with a setup guide shown where relevant.
 
     Args:
-        res: The loaded resources.json dict.
+        res: The loaded resources.toml dict.
         existing: Previously saved config dict, or None.
 
     Returns:
@@ -1082,10 +1137,10 @@ def prompt_all_config_values(res, existing=None):
 
 
 def _write_config_file(config, res):
-    """Save config.json and notify the user."""
+    """Save config.toml and notify the user."""
     save_config(config)
     print(res["install"]["messages"]["config_written"].format(
-        path=SCRIPT_DIR / "config.json"
+        path=SCRIPT_DIR / "config.toml"
     ))
 
 
@@ -1158,7 +1213,7 @@ def _print_install_summary(config, res):
     yt = config["youtube"]
     summary = res["install"]["summary"]
     print(summary["header"])
-    print(summary["config"].format(path=SCRIPT_DIR / "config.json"))
+    print(summary["config"].format(path=SCRIPT_DIR / "config.toml"))
     print(summary["secrets"].format(path=SCRIPT_DIR / ".env"))
     print(summary["terminal"].format(terminal=config["terminal"]))
     if config["cron"].get("enabled"):
@@ -1168,6 +1223,7 @@ def _print_install_summary(config, res):
         print("  Cron:          disabled")
     print(summary["youtube_url"].format(broadcast_id=yt["broadcastId"]))
     print(summary["run_hint"])
+    print(summary["edit_hint"])
 
 
 def do_install():
@@ -1425,7 +1481,8 @@ def _backup_current_files():
 
     files_to_backup = [
         SCRIPT_DIR / "stream.py",
-        SCRIPT_DIR / "resources.json",
+        SCRIPT_DIR / "resources.toml",
+        SCRIPT_DIR / "config.toml",
     ]
 
     with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1481,7 +1538,7 @@ def do_update():
     backup_path = _backup_current_files()
     print(msgs.get("backup_created", "Backup created: {path}").format(path=backup_path))
 
-    assets = ["stream.py", "resources.json"]
+    assets = ["stream.py", "resources.toml"]
     for asset in assets:
         print(msgs.get("downloading", "Downloading {file}...").format(file=asset))
         try:
@@ -1555,7 +1612,7 @@ def _restore_from_backup(backup_path):
 
 
 def do_rollback(version=None):
-    """Restore stream.py and resources.json from a previous backup.
+    """Restore stream.py and resources.toml from a previous backup.
 
     If version is provided, restores that specific backup.
     Otherwise, lists available backups and prompts the user to choose.
