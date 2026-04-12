@@ -1,7 +1,8 @@
-"""Tests for config/env/resources loading and _get_nested."""
+"""Tests for config/env/resources loading, _get_nested, and asset auto-download."""
 
 import json
 import os
+from unittest.mock import patch, MagicMock
 
 import stream
 
@@ -93,6 +94,61 @@ class TestEnv:
 # ── load_resources ───────────────────────────────────────────────────────────
 
 
+class TestReleaseAssetUrl:
+    def test_release_asset_url_dev(self):
+        """Dev builds use the 'latest' download URL."""
+        with patch.object(stream, "__version__", "dev"):
+            url = stream._release_asset_url("resources.json")
+
+        assert "/releases/latest/download/resources.json" in url
+        assert stream.GITHUB_REPO in url
+
+    def test_release_asset_url_tagged(self):
+        """Tagged releases use the version-specific download URL."""
+        with patch.object(stream, "__version__", "v0.1.5"):
+            url = stream._release_asset_url("resources.json")
+
+        assert "/releases/download/v0.1.5/resources.json" in url
+        assert stream.GITHUB_REPO in url
+
+
+class TestEnsureReleaseAsset:
+    def test_returns_existing_file(self, tmp_script_dir):
+        """When the file already exists, returns its path without downloading."""
+        path = tmp_script_dir / "resources.json"
+        path.write_text('{"existing": true}')
+
+        with patch("urllib.request.urlretrieve") as mock_retrieve:
+            result = stream._ensure_release_asset("resources.json")
+
+        mock_retrieve.assert_not_called()
+        assert result == path
+
+    def test_downloads_missing_file(self, tmp_script_dir):
+        """When the file is missing, downloads it from the release URL."""
+        def fake_download(url, dest):
+            dest.write_text('{"downloaded": true}') if hasattr(dest, 'write_text') else open(dest, 'w').close()
+
+        with patch("urllib.request.urlretrieve") as mock_retrieve:
+            mock_retrieve.side_effect = lambda url, dest: open(dest, 'w').close()
+            result = stream._ensure_release_asset("resources.json")
+
+        mock_retrieve.assert_called_once()
+        url_arg = mock_retrieve.call_args[0][0]
+        assert "resources.json" in url_arg
+        assert result == tmp_script_dir / "resources.json"
+
+    def test_downloads_from_version_url(self, tmp_script_dir):
+        """Downloaded URL matches the current __version__."""
+        with patch.object(stream, "__version__", "v0.2.0"), \
+             patch("urllib.request.urlretrieve") as mock_retrieve:
+            mock_retrieve.side_effect = lambda url, dest: open(dest, 'w').close()
+            stream._ensure_release_asset("resources.json")
+
+        url_arg = mock_retrieve.call_args[0][0]
+        assert "/releases/download/v0.2.0/resources.json" in url_arg
+
+
 class TestLoadResources:
     def test_load_resources_reads_json(self, tmp_script_dir):
         """load_resources reads and parses resources.json from SCRIPT_DIR."""
@@ -104,12 +160,16 @@ class TestLoadResources:
         result = stream.load_resources()
         assert result == resources_data
 
-    def test_load_resources_missing_raises(self, tmp_script_dir):
-        """load_resources raises FileNotFoundError when resources.json is absent."""
-        import pytest
+    def test_load_resources_downloads_when_missing(self, tmp_script_dir, sample_resources):
+        """load_resources auto-downloads resources.json when it is absent."""
+        def fake_download(url, dest):
+            with open(dest, "w") as fh:
+                json.dump(sample_resources, fh)
 
-        with pytest.raises(FileNotFoundError):
-            stream.load_resources()
+        with patch("urllib.request.urlretrieve", side_effect=fake_download):
+            result = stream.load_resources()
+
+        assert result == sample_resources
 
 
 # ── _get_nested ──────────────────────────────────────────────────────────────

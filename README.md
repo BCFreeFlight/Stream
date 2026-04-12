@@ -18,10 +18,10 @@ See [REQUIREMENTS.md](REQUIREMENTS.md) for the full list. In brief:
 Open a terminal, `cd` to the directory where you want the script to live, and run:
 
 ```bash
-curl -fLO https://github.com/BCFreeFlight/Stream/releases/latest/download/stream.py -fLO https://github.com/BCFreeFlight/Stream/releases/latest/download/resources.json && python3 stream.py --install
+curl -fLO https://github.com/BCFreeFlight/Stream/releases/latest/download/stream.py && python3 stream.py --install
 ```
 
-This downloads the latest release and launches the interactive setup wizard.
+This downloads the latest release and launches the interactive setup wizard. Any companion files (like `resources.json`) are downloaded automatically on first run.
 
 ## Installation (step by step)
 
@@ -29,7 +29,6 @@ This downloads the latest release and launches the interactive setup wizard.
 
    ```bash
    curl -fLO https://github.com/BCFreeFlight/Stream/releases/latest/download/stream.py
-   curl -fLO https://github.com/BCFreeFlight/Stream/releases/latest/download/resources.json
    ```
 
 2. Run the interactive setup:
@@ -185,7 +184,13 @@ Running `--install` again updates entries without creating duplicates.
 Releases are published automatically on every push to `main`. To update:
 
 ```bash
-curl -L -o stream.py https://github.com/BCFreeFlight/Stream/releases/latest/download/stream.py
+python3 stream.py --update
+```
+
+Or manually:
+
+```bash
+curl -fLO https://github.com/BCFreeFlight/Stream/releases/latest/download/stream.py
 ```
 
 See the [Releases page](https://github.com/BCFreeFlight/Stream/releases) for changelogs.

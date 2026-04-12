@@ -22,6 +22,20 @@ All code must follow **SOLID principles** with a focus on clean code and single 
 
 ---
 
+## Testing
+
+Every code change must include corresponding unit tests:
+
+- Tests live in the `tests/` directory, organized by functional area (e.g., `test_configuration.py`, `test_ffmpeg.py`)
+- Use `pytest` with fixtures defined in `tests/conftest.py`
+- Mock external dependencies (network calls, file system, subprocesses) — never make real API calls in tests
+- Test both the happy path and edge cases (missing files, network errors, invalid input)
+- Run the full test suite (`python3 -m pytest tests/`) before considering a change complete
+- New functions added to `stream.py` must have test coverage
+- If modifying existing behavior, update or add tests to reflect the change
+
+---
+
 ## Repository Structure
 
 ```
