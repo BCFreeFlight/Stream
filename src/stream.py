@@ -932,14 +932,13 @@ def prompt_all_config_values(res, existing=None):
         _get_nested(ex, "stream", "audioCodec"),
         default=defaults["audioCodec"],
     )
-    mute_str = _smart_prompt(
-        prompts["mute"],
-        "",
-        default=defaults["mute"],
-        validator=yes_no_validator,
-    )
-    mute = _get_nested(ex, "stream", "mute", default=None)
-    if mute is None:
+    existing_mute = _get_nested(ex, "stream", "mute", default=None)
+    if existing_mute is not None:
+        mute = existing_mute
+    else:
+        mute_str = _prompt(
+            prompts["mute"], default=defaults["mute"], validator=yes_no_validator
+        )
         mute = mute_str.lower() == "yes"
 
     # ── YouTube Broadcast ──
@@ -948,6 +947,7 @@ def prompt_all_config_values(res, existing=None):
         prompts["broadcastTitle"],
         _get_nested(ex, "youtube", "broadcastTitle"),
         default=defaults["broadcastTitle"],
+        guide=res["install"]["broadcast_title_guide"],
     )
     privacy = _smart_prompt(
         prompts["privacy"],

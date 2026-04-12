@@ -48,6 +48,18 @@
       ""
     ],
 
+    "broadcast_title_guide": [
+      "",
+      "  The broadcast title is updated each time --start runs.",
+      "  Use {date} anywhere in the title to insert today's date (ISO format).",
+      "",
+      "  Examples:",
+      "    Coopers Launch: {date}     =>  Coopers Launch: 2026-04-12",
+      "    My Stream ({date})         =>  My Stream (2026-04-12)",
+      "    Live Cam                   =>  Live Cam  (no date)",
+      ""
+    ],
+
     "cron_guide": [
       "",
       "  Cron jobs will automatically start and stop your stream on a schedule.",
@@ -84,7 +96,7 @@
     "defaults": {
       "videoCodec": "copy",
       "audioCodec": "copy",
-      "mute": "no",
+      "mute": "yes",
       "broadcastTitle": "Coopers Launch: {date}",
       "privacy": "public",
       "categoryId": "22",
