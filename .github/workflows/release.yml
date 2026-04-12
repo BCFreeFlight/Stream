@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        run: |
+          LATEST=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name' 2>/dev/null || echo "none")
+          if [ "$LATEST" = "none" ] || [ -z "$LATEST" ]; then
+            echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
+            echo "first=true" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="${LATEST#v}"
+            MAJOR="${VERSION%%.*}"
+            REST="${VERSION#*.}"
+            MINOR="${REST%%.*}"
+            PATCH="${REST#*.}"
+            NEXT=$((PATCH + 1))
+            echo "tag=v${MAJOR}.${MINOR}.${NEXT}" >> "$GITHUB_OUTPUT"
+            echo "prev=${LATEST}" >> "$GITHUB_OUTPUT"
+            echo "first=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build changelog
+        id: notes
+        run: |
+          if [ "${{ steps.version.outputs.first }}" = "true" ]; then
+            echo "body=Initial release" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "body<<CHANGELOG_EOF"
+              git log "${{ steps.version.outputs.prev }}"..HEAD --pretty=format:"- %s (%h)"
+              echo ""
+              echo "CHANGELOG_EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            src/stream.py \
+            src/resources.json \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes "${{ steps.notes.outputs.body }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

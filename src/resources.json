@@ -1,0 +1,122 @@
+{
+  "install": {
+    "header": "=== BC Free Flight Stream — Setup ===",
+
+    "sections": {
+      "google": "── Google OAuth ──",
+      "rtsp": "\n── RTSP Source ──",
+      "youtube_broadcast": "\n── YouTube Broadcast ──",
+      "youtube_stream": "\n── YouTube Stream ──",
+      "schedule": "\n── Schedule ──",
+      "youtube_setup": "\n── Setting up YouTube resources ──"
+    },
+
+    "google_cloud_guide": [
+      "",
+      "  It looks like you don't have Google OAuth credentials yet.",
+      "  Follow these steps to create them:",
+      "",
+      "  1. Go to https://console.cloud.google.com/",
+      "  2. Click 'Select a project' at the top, then 'New Project'",
+      "  3. Give it a name (e.g., 'BC Free Flight') and click 'Create'",
+      "  4. Make sure your new project is selected at the top",
+      "  5. In the left sidebar, go to 'APIs & Services' > 'Library'",
+      "  6. Search for 'YouTube Data API v3' and click 'Enable'",
+      "  7. In the sidebar, go to 'APIs & Services' > 'OAuth consent screen'",
+      "     - Choose 'External' and click 'Create'",
+      "     - Fill in the app name and your email address",
+      "     - Click through the remaining steps (scopes, test users)",
+      "     - Add your Google account as a test user",
+      "  8. In the sidebar, go to 'APIs & Services' > 'Credentials'",
+      "  9. Click 'Create Credentials' > 'OAuth client ID'",
+      "  10. Select 'Desktop app' as the application type",
+      "  11. Click 'Create'",
+      "  12. Copy the 'Client ID' and 'Client Secret' from the popup",
+      ""
+    ],
+
+    "youtube_stream_guide": [
+      "",
+      "  To find your YouTube stream key and URLs:",
+      "",
+      "  1. Go to https://studio.youtube.com/",
+      "  2. Click 'Go Live' or the camera icon > 'Go Live'",
+      "  3. Select 'Stream' tab",
+      "  4. Under 'Stream key', click 'Copy'",
+      "  5. The Stream URL and Backup URL are shown below the key",
+      "     (defaults are usually rtmp://a.rtmp.youtube.com/live2)",
+      ""
+    ],
+
+    "prompts": {
+      "clientId": "Google OAuth 2.0 Client ID",
+      "clientSecret": "Google OAuth 2.0 Client Secret",
+      "rtspUrl": "RTSP URL of the camera stream",
+      "videoCodec": "Video codec",
+      "audioCodec": "Audio codec",
+      "mute": "Mute audio? (yes/no)",
+      "broadcastTitle": "Broadcast title template",
+      "privacy": "Privacy (public/unlisted/private)",
+      "categoryId": "YouTube category ID",
+      "broadcastId": "Existing broadcast ID (leave empty to create new)",
+      "streamURL": "YouTube RTMP stream URL",
+      "backupStreamUrl": "Backup RTMP stream URL",
+      "streamKey": "YouTube stream key",
+      "cronStart": "Cron start expression",
+      "cronStop": "Cron stop expression"
+    },
+
+    "defaults": {
+      "videoCodec": "copy",
+      "audioCodec": "copy",
+      "mute": "no",
+      "broadcastTitle": "Coopers Launch: {date}",
+      "privacy": "public",
+      "categoryId": "22",
+      "broadcastId": "",
+      "streamURL": "rtmp://a.rtmp.youtube.com/live2",
+      "backupStreamUrl": "rtmp://b.rtmp.youtube.com/live2?backup=1",
+      "streamKey": "",
+      "cronStart": "30 6 1-31 4-10 *",
+      "cronStop": "25 18 1-31 4-10 *"
+    },
+
+    "validation": {
+      "required": "  This field is required.",
+      "rtsp_url": "  URL must start with rtsp://",
+      "yes_no": "  Enter yes or no",
+      "privacy": "  Enter public, unlisted, or private"
+    },
+
+    "messages": {
+      "config_written": "\nConfig written to {path}",
+      "secrets_written": "Secrets written to {path}",
+      "ffmpeg_installed": "\nffmpeg is already installed",
+      "ffmpeg_installing": "\nInstalling ffmpeg...",
+      "deps_verified": "Python dependencies verified",
+      "oauth_starting": "\nStarting OAuth flow — a browser window will open...",
+      "oauth_saved": "OAuth tokens saved",
+      "terminal_detected": "\nTerminal emulator: {terminal}",
+      "cron_registered": "Crontab entries registered",
+      "broadcast_id_label": "\n  Broadcast ID:  {broadcast_id}",
+      "stream_url_label": "  Stream URL:    https://youtube.com/live/{broadcast_id}"
+    },
+
+    "summary": {
+      "header": "\n=== Setup Complete ===",
+      "config": "  Config:        {path}",
+      "secrets": "  Secrets:       {path}",
+      "terminal": "  Terminal:      {terminal}",
+      "cron_start": "  Cron start:    {schedule}",
+      "cron_stop": "  Cron stop:     {schedule}",
+      "youtube_url": "  YouTube URL:   https://youtube.com/live/{broadcast_id}",
+      "run_hint": "\nRun 'python3 stream.py --start' to begin streaming."
+    }
+  },
+
+  "errors": {
+    "missing_config": "Missing YouTube config: {fields}. Run 'python3 stream.py --install' first.",
+    "broadcast_complete": "Broadcast {broadcast_id} is in 'complete' state and cannot be restarted. Run 'python3 stream.py --install' to create a new broadcast.",
+    "broadcast_unexpected": "Broadcast {broadcast_id} is in unexpected state: {status}"
+  }
+}
