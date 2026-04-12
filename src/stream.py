@@ -115,8 +115,39 @@ def save_env_value(key, value):
     set_key(str(SCRIPT_DIR / ".env"), key, value)
 
 
+def _release_asset_url(filename):
+    """Build the GitHub release download URL for the given asset.
+
+    Uses the version-specific URL for tagged releases,
+    or the 'latest' URL for dev builds.
+    """
+    if __version__ == "dev":
+        return f"https://github.com/{GITHUB_REPO}/releases/latest/download/{filename}"
+    return f"https://github.com/{GITHUB_REPO}/releases/download/{__version__}/{filename}"
+
+
+def _ensure_release_asset(filename):
+    """Return the path to a release asset, downloading it if missing.
+
+    Checks whether the file exists beside the script. If not, downloads it
+    from the matching GitHub release. This allows stream.py to be distributed
+    as a single file that self-fetches its companion assets on first run.
+    """
+    import urllib.request
+
+    path = SCRIPT_DIR / filename
+    if path.exists():
+        return path
+
+    url = _release_asset_url(filename)
+    print(f"Downloading {filename}...")
+    urllib.request.urlretrieve(url, path)
+    return path
+
+
 def load_resources():
-    """Load user-facing strings from resources.json."""
+    """Load user-facing strings from resources.json, downloading if missing."""
+    _ensure_release_asset("resources.json")
     with open(SCRIPT_DIR / "resources.json", "r") as fh:
         return json.load(fh)
 
