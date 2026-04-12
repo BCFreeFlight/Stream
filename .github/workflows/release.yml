@@ -20,20 +20,24 @@ jobs:
       - name: Determine next version
         id: version
         run: |
-          LATEST=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name' 2>/dev/null || echo "none")
-          if [ "$LATEST" = "none" ] || [ -z "$LATEST" ]; then
+          if LATEST=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name' 2>/dev/null); then
+            if [ -n "$LATEST" ]; then
+              VERSION="${LATEST#v}"
+              MAJOR="${VERSION%%.*}"
+              REST="${VERSION#*.}"
+              MINOR="${REST%%.*}"
+              PATCH="${REST#*.}"
+              NEXT=$((PATCH + 1))
+              echo "tag=v${MAJOR}.${MINOR}.${NEXT}" >> "$GITHUB_OUTPUT"
+              echo "prev=${LATEST}" >> "$GITHUB_OUTPUT"
+              echo "first=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
+              echo "first=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
             echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
             echo "first=true" >> "$GITHUB_OUTPUT"
-          else
-            VERSION="${LATEST#v}"
-            MAJOR="${VERSION%%.*}"
-            REST="${VERSION#*.}"
-            MINOR="${REST%%.*}"
-            PATCH="${REST#*.}"
-            NEXT=$((PATCH + 1))
-            echo "tag=v${MAJOR}.${MINOR}.${NEXT}" >> "$GITHUB_OUTPUT"
-            echo "prev=${LATEST}" >> "$GITHUB_OUTPUT"
-            echo "first=false" >> "$GITHUB_OUTPUT"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
