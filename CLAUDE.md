@@ -200,7 +200,7 @@ Required OAuth scopes:
 
 ## YouTube Broadcast Lifecycle
 
-The broadcast and stream are created **once** during `--install` and **reused** on every `--start`/`--stop` cycle. This ensures a stable YouTube URL that can be embedded in a webpage.
+The stream resource (RTMP URL and stream key) is created **once** during `--install` and reused permanently. A new broadcast is created automatically each time `--start` runs (if the previous one was completed). The embedded stream URL uses the **channel-based format** (`/embed/live_stream?channel=...`) which always shows whatever broadcast is currently live — it is not tied to any specific broadcast ID.
 
 ### During `--install`:
 1. `liveBroadcasts.insert` — create broadcast (with `enableAutoStop: false` to prevent auto-completion)
@@ -211,21 +211,21 @@ The broadcast and stream are created **once** during `--install` and **reused** 
 
 ### During `--start`:
 1. Read `broadcastId`, `streamURL`, `streamKey` from config
-2. Update the broadcast title with today's date via `liveBroadcasts.update`
-3. Launch ffmpeg pointing at the RTMP URL
-4. Wait for stream to become active
-5. If broadcast is not already live: `liveBroadcasts.transition` → `testing` → `live`
-6. If broadcast is already live: skip transition, just stream
+2. If the broadcast is in `complete` state, automatically create a new one, bind the existing stream, and update `config.toml`
+3. Update the broadcast title with today's date via `liveBroadcasts.update`
+4. Launch ffmpeg pointing at the RTMP URL
+5. Wait for stream to become active
+6. If broadcast is not already live: `liveBroadcasts.transition` → `testing` → `live`
+7. If broadcast is already live: skip transition, just stream
 
 ### During `--stop`:
 1. Stop the ffmpeg process
-2. The broadcast is **not** transitioned to `complete` — it remains alive
-3. The URL stays stable for the next `--start`
+2. Transition the broadcast to `complete` — this archives the stream as a VOD on the channel
+3. The next `--start` will create a fresh broadcast automatically
 
 ### Retry behavior:
 - On retry, the script reconnects to the **same** broadcast — it does not create a new one
 - Retries alternate between the primary `streamURL` and `backupStreamUrl` (if configured)
-- If a broadcast reaches `complete` state (e.g., YouTube auto-completed it), `--start` will error and instruct the user to run `--install` to create a new broadcast
 
 ---
 
@@ -288,8 +288,7 @@ The start cron opens a single terminal window. When the stop cron fires, the str
 The release workflow lives at `.github/workflows/release.yml`.
 
 **Triggers:**
-- Push to `main`
-- Manual `workflow_dispatch`
+- Manual `workflow_dispatch` only — releases are not created automatically on merge
 
 **Versioning:**
 - Reads the latest release tag from the GitHub API
@@ -314,6 +313,4 @@ The release workflow lives at `.github/workflows/release.yml`.
 - Do not add new CLI switches without updating this document and `README.md`
 - Do not add new config keys without updating the config contract in this document, `README.md`, `REQUIREMENTS.md`, and example files
 - Do not install ffmpeg or system packages during `--start` or `--stop`
-- Do not transition the broadcast to `complete` during `--stop` — the URL must remain stable
-- Do not create new YouTube broadcasts on `--start` — always reuse the existing one from config
 - Do not add dead config fields — every key must be read and used by the script

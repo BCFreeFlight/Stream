@@ -154,5 +154,4 @@ success = "Rolled back to {version}. Restart the script to use the restored vers
 
 [errors]
 missing_config = "Missing YouTube config: {fields}. Run 'python3 stream.py --install' first."
-broadcast_complete = "Broadcast {broadcast_id} is in 'complete' state and cannot be restarted. Run 'python3 stream.py --install' to create a new broadcast."
 broadcast_unexpected = "Broadcast {broadcast_id} is in unexpected state: {status}"

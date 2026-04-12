@@ -115,7 +115,7 @@ Resumes streaming to the existing YouTube broadcast. Updates the broadcast title
 python3 stream.py --stop
 ```
 
-Stops the ffmpeg process gracefully. The YouTube broadcast is **not** completed — it remains alive so the URL stays stable for the next start.
+Stops the ffmpeg process gracefully and transitions the broadcast to `complete`, archiving it as a VOD on the channel. The next `--start` will create a fresh broadcast automatically.
 
 ### Re-run setup
 

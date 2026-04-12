@@ -155,9 +155,71 @@ class TestMainDispatch:
 # ── do_stop orchestration ──────────────────────────────────────────────────
 
 
+class TestCompleteBroadcast:
+    def test_complete_broadcast_live(self, sample_config, mock_logger):
+        """Transitions the broadcast to complete when it is live."""
+        mock_creds = MagicMock()
+        mock_youtube = MagicMock()
+
+        with patch("stream.get_valid_credentials", return_value=mock_creds), \
+             patch("stream.build_youtube_service", return_value=mock_youtube), \
+             patch("stream._api_get_broadcast_lifecycle", return_value="live"), \
+             patch("stream._api_transition_broadcast") as mock_trans:
+            stream._complete_broadcast(sample_config, mock_logger)
+
+        mock_trans.assert_called_once_with(mock_youtube, "bcast-123", "complete")
+
+    def test_complete_broadcast_already_complete(self, sample_config, mock_logger):
+        """Does not call transition when already complete."""
+        mock_creds = MagicMock()
+        mock_youtube = MagicMock()
+
+        with patch("stream.get_valid_credentials", return_value=mock_creds), \
+             patch("stream.build_youtube_service", return_value=mock_youtube), \
+             patch("stream._api_get_broadcast_lifecycle", return_value="complete"), \
+             patch("stream._api_transition_broadcast") as mock_trans:
+            stream._complete_broadcast(sample_config, mock_logger)
+
+        mock_trans.assert_not_called()
+
+    def test_complete_broadcast_no_broadcast_id(self, sample_config, mock_logger):
+        """Skips completion when broadcast ID is empty."""
+        sample_config["youtube"]["broadcastId"] = ""
+
+        with patch("stream.get_valid_credentials") as mock_creds:
+            stream._complete_broadcast(sample_config, mock_logger)
+
+        mock_creds.assert_not_called()
+
+    def test_complete_broadcast_handles_error(self, sample_config, mock_logger):
+        """Logs a warning if completion fails instead of crashing."""
+        with patch("stream.get_valid_credentials", side_effect=Exception("auth failed")):
+            stream._complete_broadcast(sample_config, mock_logger)
+
+        mock_logger.warn.assert_called_once()
+
+
+class TestCreateFreshBroadcast:
+    def test_create_fresh_broadcast(self, tmp_script_dir, sample_config, mock_logger):
+        """Creates a new broadcast, binds stream, saves config, returns new ID."""
+        mock_youtube = MagicMock()
+
+        with patch("stream.create_broadcast", return_value="new-bcast-456"), \
+             patch("stream.bind_stream_to_broadcast") as mock_bind, \
+             patch("stream.apply_broadcast_category") as mock_cat, \
+             patch("stream.save_config") as mock_save:
+            result = stream._create_fresh_broadcast(mock_youtube, sample_config, mock_logger)
+
+        assert result == "new-bcast-456"
+        assert sample_config["youtube"]["broadcastId"] == "new-bcast-456"
+        mock_bind.assert_called_once_with(mock_youtube, "new-bcast-456", "stream-456", mock_logger)
+        mock_cat.assert_called_once_with(mock_youtube, "new-bcast-456", "22", mock_logger)
+        mock_save.assert_called_once_with(sample_config)
+
+
 class TestDoStopOrchestration:
     def test_do_stop_sequence(self, sample_config, mock_logger):
-        """do_stop calls load_config, load_env, create_logger, signal, cleanup in order."""
+        """do_stop calls load_config, load_env, create_logger, signal, complete, cleanup in order."""
         call_order = []
 
         def track(name):
@@ -173,11 +235,12 @@ class TestDoStopOrchestration:
              patch("stream.load_env", side_effect=track("load_env")), \
              patch("stream.create_logger", side_effect=track("create_logger")), \
              patch("stream._signal_running_process", side_effect=track("signal")), \
+             patch("stream._complete_broadcast", side_effect=track("complete")), \
              patch("stream._cleanup_stop_files", side_effect=track("cleanup")):
             stream.do_stop()
 
         assert call_order == [
-            "load_config", "load_env", "create_logger", "signal", "cleanup"
+            "load_config", "load_env", "create_logger", "signal", "complete", "cleanup"
         ]
         # Verify the "Clean shutdown" message was logged
         info_messages = [str(c) for c in mock_logger.info.call_args_list]
