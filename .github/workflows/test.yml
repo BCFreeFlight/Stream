@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   test:
@@ -29,8 +30,55 @@ jobs:
           pip install google-auth google-auth-oauthlib google-api-python-client python-dotenv requests
 
       - name: Run tests with coverage
+        id: tests
         run: |
-          pytest --cov=stream --cov-report=xml --cov-report=term-missing -v
+          pytest --cov=stream --cov-report=xml --cov-report=term-missing --junitxml=test-results.xml -v 2>&1 | tee test-output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Build PR comment
+        if: github.event_name == 'pull_request' && always()
+        id: comment
+        run: |
+          TOTAL=$(grep -oP '\d+ passed' test-output.txt | head -1 || echo "0 passed")
+          FAILED=$(grep -oP '\d+ failed' test-output.txt | head -1 || echo "")
+          DURATION=$(grep -oP 'in [\d.]+s' test-output.txt | tail -1 || echo "")
+          COVERAGE=$(grep -oP 'TOTAL\s+\d+\s+\d+\s+\d+%' test-output.txt | grep -oP '\d+%' || echo "N/A")
+
+          if [ "${{ steps.tests.outputs.exit_code }}" = "0" ]; then
+            STATUS="✅ All tests passed"
+          else
+            STATUS="❌ Some tests failed"
+          fi
+
+          {
+            echo "body<<COMMENT_EOF"
+            echo "## Test Results"
+            echo ""
+            echo "${STATUS}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Tests | ${TOTAL} ${FAILED} |"
+            echo "| Coverage | ${COVERAGE} |"
+            echo "| Duration | ${DURATION} |"
+            echo ""
+            echo "<details>"
+            echo "<summary>Full test output</summary>"
+            echo ""
+            echo '```'
+            tail -60 test-output.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+            echo "COMMENT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request' && always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: test-results
+          message: ${{ steps.comment.outputs.body }}
 
       - name: Upload coverage to Codecov
         if: always()
@@ -39,3 +87,7 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Fail if tests failed
+        if: steps.tests.outputs.exit_code != '0'
+        run: exit 1
