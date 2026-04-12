@@ -121,7 +121,32 @@ Re-running `--install` overwrites configuration and creates new YouTube resource
 python3 stream.py --update
 ```
 
-Backs up the current `stream.py` and `resources.json` into a versioned zip file (e.g., `stream.v0.1.3.bak.zip`), then downloads and replaces both files from the latest GitHub release.
+Backs up the current `stream.py` and `resources.json` into a versioned zip in the `backup/` directory (e.g., `backup/stream.v0.1.3.bak.zip`), then downloads and replaces both files from the latest GitHub release.
+
+### Roll back to a previous version
+
+Roll back to a specific version:
+
+```bash
+python3 stream.py --roll-back v0.1.2
+```
+
+Or run it without a version to choose interactively from available backups:
+
+```bash
+python3 stream.py --roll-back
+```
+
+```
+Available backups:
+  1. v0.1.3  (12 KB)
+  2. v0.1.2  (11 KB)
+  3. v0.1.1  (11 KB)
+
+Enter number to restore (or 'q' to cancel):
+```
+
+Backups are created automatically by `--update` and stored in the `backup/` directory beside the script.
 
 ## Crontab
 

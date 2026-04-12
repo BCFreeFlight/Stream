@@ -1375,15 +1375,22 @@ def do_stop():
 # ── --update Command ─────────────────────────────────────────────────────────
 
 
+def _backup_dir():
+    """Return the backup directory path, creating it if needed."""
+    path = SCRIPT_DIR / "backup"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _backup_current_files():
     """Create a zip backup of the current script and resources before updating.
 
-    The backup is named stream.<current_version>.bak.zip in the script directory.
+    The backup is saved to backup/stream.<current_version>.bak.zip.
     """
     import zipfile
 
     version_label = __version__.replace("/", "_")
-    backup_path = SCRIPT_DIR / f"stream.{version_label}.bak.zip"
+    backup_path = _backup_dir() / f"stream.{version_label}.bak.zip"
 
     files_to_backup = [
         SCRIPT_DIR / "stream.py",
@@ -1460,6 +1467,96 @@ def do_update():
               version=latest))
 
 
+# ── --roll-back Command ──────────────────────────────────────────────────────
+
+
+def _list_available_backups():
+    """Return a sorted list of backup zip files (newest first)."""
+    backup_path = _backup_dir()
+    backups = sorted(backup_path.glob("stream.*.bak.zip"), reverse=True)
+    return backups
+
+
+def _extract_version_from_backup(backup_path):
+    """Extract the version label from a backup filename."""
+    name = backup_path.stem
+    return name.replace("stream.", "").replace(".bak", "")
+
+
+def _find_backup_by_version(version):
+    """Find a backup zip matching the given version string, or None."""
+    for backup in _list_available_backups():
+        label = _extract_version_from_backup(backup)
+        if label == version or label == version.replace("/", "_"):
+            return backup
+    return None
+
+
+def _prompt_backup_selection(backups, res):
+    """Display available backups and let the user choose one by number."""
+    msgs = res.get("rollback", {})
+    print(msgs.get("available_header", "\nAvailable backups:"))
+    for i, backup in enumerate(backups, 1):
+        version = _extract_version_from_backup(backup)
+        size_kb = backup.stat().st_size // 1024
+        print(f"  {i}. {version}  ({size_kb} KB)")
+
+    print()
+    while True:
+        choice = input(msgs.get("choose_prompt", "Enter number to restore (or 'q' to cancel): ")).strip()
+        if choice.lower() == "q":
+            return None
+        try:
+            index = int(choice) - 1
+            if 0 <= index < len(backups):
+                return backups[index]
+        except ValueError:
+            pass
+        print(msgs.get("invalid_choice", "  Invalid selection. Try again."))
+
+
+def _restore_from_backup(backup_path):
+    """Extract a backup zip, replacing the current script and resources."""
+    import zipfile
+
+    with zipfile.ZipFile(backup_path, "r") as zf:
+        zf.extractall(SCRIPT_DIR)
+
+
+def do_rollback(version=None):
+    """Restore stream.py and resources.json from a previous backup.
+
+    If version is provided, restores that specific backup.
+    Otherwise, lists available backups and prompts the user to choose.
+    """
+    res = load_resources()
+    msgs = res.get("rollback", {})
+
+    backups = _list_available_backups()
+    if not backups:
+        print(msgs.get("no_backups", "No backups found in the backup directory."))
+        return
+
+    if version:
+        backup = _find_backup_by_version(version)
+        if not backup:
+            print(msgs.get("not_found", "No backup found for version: {version}").format(
+                version=version))
+            print(msgs.get("available_hint", "Run --roll-back without a version to see available backups."))
+            return
+    else:
+        backup = _prompt_backup_selection(backups, res)
+        if not backup:
+            print(msgs.get("cancelled", "Roll-back cancelled."))
+            return
+
+    restored_version = _extract_version_from_backup(backup)
+    print(msgs.get("restoring", "Restoring from {version}...").format(version=restored_version))
+    _restore_from_backup(backup)
+    print(msgs.get("success", "Rolled back to {version}. Restart the script to use the restored version.").format(
+        version=restored_version))
+
+
 # ── Entry Point ──────────────────────────────────────────────────────────────
 
 
@@ -1471,6 +1568,8 @@ def main():
     group.add_argument("--start", action="store_true", help="Start the stream")
     group.add_argument("--stop", action="store_true", help="Stop the stream")
     group.add_argument("--update", action="store_true", help="Update to the latest release")
+    group.add_argument("--roll-back", nargs="?", const="__prompt__", metavar="VERSION",
+                       help="Roll back to a previous version (interactive if no version given)")
     args = parser.parse_args()
 
     if args.install:
@@ -1481,6 +1580,9 @@ def main():
         do_stop()
     elif args.update:
         do_update()
+    elif args.roll_back:
+        version = None if args.roll_back == "__prompt__" else args.roll_back
+        do_rollback(version)
 
 
 if __name__ == "__main__":

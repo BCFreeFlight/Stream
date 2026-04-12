@@ -153,6 +153,18 @@
     "success": "Updated to {version}. Restart the script to use the new version."
   },
 
+  "rollback": {
+    "available_header": "\nAvailable backups:",
+    "choose_prompt": "Enter number to restore (or 'q' to cancel): ",
+    "invalid_choice": "  Invalid selection. Try again.",
+    "no_backups": "No backups found in the backup directory.",
+    "not_found": "No backup found for version: {version}",
+    "available_hint": "Run --roll-back without a version to see available backups.",
+    "cancelled": "Roll-back cancelled.",
+    "restoring": "Restoring from {version}...",
+    "success": "Rolled back to {version}. Restart the script to use the restored version."
+  },
+
   "errors": {
     "missing_config": "Missing YouTube config: {fields}. Run 'python3 stream.py --install' first.",
     "broadcast_complete": "Broadcast {broadcast_id} is in 'complete' state and cannot be restarted. Run 'python3 stream.py --install' to create a new broadcast.",

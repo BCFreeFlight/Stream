@@ -211,3 +211,4 @@ src/config.json
 src/*.pid
 src/*.stop
 src/logs/
+src/backup/

@@ -140,7 +140,8 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 | `--install` | Interactive setup: prompts for config, writes files, installs deps, runs OAuth, creates YouTube resources, registers cron |
 | `--start` | Resumes streaming to the existing YouTube broadcast. Runs in the foreground, blocking the terminal. |
 | `--stop` | Writes the stop sentinel, signals the running process, waits for graceful shutdown. The broadcast is **not** completed — it stays alive for reuse. |
-| `--update` | Backs up current files to a versioned zip, downloads the latest release from GitHub, and replaces `stream.py` and `resources.json`. |
+| `--update` | Backs up current files to a versioned zip in `backup/`, downloads the latest release from GitHub, and replaces `stream.py` and `resources.json`. |
+| `--roll-back [VERSION]` | Restores `stream.py` and `resources.json` from a backup. Without a version, lists available backups interactively. |
 
 ---
 

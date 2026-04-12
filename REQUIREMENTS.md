@@ -35,3 +35,4 @@ These files are generated locally beside `stream.py` and must never be committed
 | `stream.pid` | `--start` | PID of the running stream process |
 | `stream.stop` | `--stop` / signal handler | Sentinel that suppresses retries |
 | `logs/YYYY-MM-DD.log` | `--start` | Daily log file |
+| `backup/stream.*.bak.zip` | `--update` | Versioned backups for roll-back |
