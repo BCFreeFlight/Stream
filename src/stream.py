@@ -65,6 +65,10 @@ from googleapiclient.errors import HttpError
 
 # ── Constants & Types ────────────────────────────────────────────────────────
 
+__version__ = "dev"
+
+GITHUB_REPO = "BCFreeFlight/Stream"
+
 SCOPES = [
     "https://www.googleapis.com/auth/youtube",
     "https://www.googleapis.com/auth/youtube.force-ssl",
@@ -1314,6 +1318,7 @@ def do_start():
 
     _prepare_stream_process(config, logger)
     register_signal_handlers()
+    logger.info(f"BC Free Flight Stream {__version__}")
     logger.info(f"Stream process started (PID {os.getpid()})")
 
     _run_stream_loop(config, logger, res)
@@ -1357,6 +1362,7 @@ def do_stop():
     load_env()
     logger = create_logger(config)
 
+    logger.info(f"BC Free Flight Stream {__version__}")
     _signal_running_process(config, logger)
     _cleanup_stop_files(config)
 
@@ -1364,6 +1370,94 @@ def do_stop():
         f"Clean shutdown at {datetime.datetime.now(datetime.timezone.utc).isoformat()}"
     )
     logger.close()
+
+
+# ── --update Command ─────────────────────────────────────────────────────────
+
+
+def _backup_current_files():
+    """Create a zip backup of the current script and resources before updating.
+
+    The backup is named stream.<current_version>.bak.zip in the script directory.
+    """
+    import zipfile
+
+    version_label = __version__.replace("/", "_")
+    backup_path = SCRIPT_DIR / f"stream.{version_label}.bak.zip"
+
+    files_to_backup = [
+        SCRIPT_DIR / "stream.py",
+        SCRIPT_DIR / "resources.json",
+    ]
+
+    with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file_path in files_to_backup:
+            if file_path.exists():
+                zf.write(file_path, file_path.name)
+
+    return backup_path
+
+
+def _get_latest_release_tag():
+    """Query the GitHub API for the latest release tag. Returns None on failure."""
+    import urllib.request
+    import urllib.error
+
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode())
+            return data.get("tag_name")
+    except (urllib.error.URLError, json.JSONDecodeError):
+        return None
+
+
+def _download_release_asset(filename):
+    """Download a single asset from the latest GitHub release."""
+    import urllib.request
+
+    url = f"https://github.com/{GITHUB_REPO}/releases/latest/download/{filename}"
+    dest = SCRIPT_DIR / filename
+    urllib.request.urlretrieve(url, dest)
+
+
+def do_update():
+    """Download the latest release from GitHub, backing up current files first."""
+    res = load_resources()
+    msgs = res.get("update", {})
+
+    print(f"Current version: {__version__}")
+
+    latest = _get_latest_release_tag()
+    if not latest:
+        print(msgs.get("fetch_failed", "Could not fetch latest release from GitHub."))
+        return
+
+    print(f"Latest version:  {latest}")
+
+    if latest == __version__:
+        print(msgs.get("already_latest", "Already running the latest version."))
+        return
+
+    backup_path = _backup_current_files()
+    print(msgs.get("backup_created", "Backup created: {path}").format(path=backup_path))
+
+    assets = ["stream.py", "resources.json"]
+    for asset in assets:
+        print(msgs.get("downloading", "Downloading {file}...").format(file=asset))
+        try:
+            _download_release_asset(asset)
+        except Exception as exc:
+            print(msgs.get("download_failed",
+                  "Failed to download {file}: {error}").format(file=asset, error=exc))
+            print(msgs.get("restore_hint",
+                  "Your backup is at {path} if you need to restore.").format(path=backup_path))
+            return
+
+    print(msgs.get("success",
+          "Updated to {version}. Restart the script to use the new version.").format(
+              version=latest))
 
 
 # ── Entry Point ──────────────────────────────────────────────────────────────
@@ -1376,6 +1470,7 @@ def main():
     group.add_argument("--install", action="store_true", help="Interactive first-time setup")
     group.add_argument("--start", action="store_true", help="Start the stream")
     group.add_argument("--stop", action="store_true", help="Stop the stream")
+    group.add_argument("--update", action="store_true", help="Update to the latest release")
     args = parser.parse_args()
 
     if args.install:
@@ -1384,6 +1479,8 @@ def main():
         do_start()
     elif args.stop:
         do_stop()
+    elif args.update:
+        do_update()
 
 
 if __name__ == "__main__":

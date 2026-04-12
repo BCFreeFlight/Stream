@@ -140,6 +140,7 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 | `--install` | Interactive setup: prompts for config, writes files, installs deps, runs OAuth, creates YouTube resources, registers cron |
 | `--start` | Resumes streaming to the existing YouTube broadcast. Runs in the foreground, blocking the terminal. |
 | `--stop` | Writes the stop sentinel, signals the running process, waits for graceful shutdown. The broadcast is **not** completed — it stays alive for reuse. |
+| `--update` | Backs up current files to a versioned zip, downloads the latest release from GitHub, and replaces `stream.py` and `resources.json`. |
 
 ---
 
@@ -293,7 +294,6 @@ The release workflow lives at `.github/workflows/release.yml`.
 - Do not add a `requirements.txt` or `setup.py`
 - Do not hardcode any value that belongs in `config.json` or `.env`
 - Do not log or print secrets, tokens, or stream keys
-- Do not add a `--update` flag or any self-update mechanism
 - Do not commit runtime files (`config.json`, `.env`, `*.pid`, `*.stop`, `logs/`)
 - Do not add new CLI switches without updating this document and `README.md`
 - Do not add new config keys without updating the config contract in this document, `README.md`, `REQUIREMENTS.md`, and example files

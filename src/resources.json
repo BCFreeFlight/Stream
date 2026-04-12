@@ -143,6 +143,16 @@
     }
   },
 
+  "update": {
+    "fetch_failed": "Could not fetch latest release from GitHub.",
+    "already_latest": "Already running the latest version.",
+    "backup_created": "Backup created: {path}",
+    "downloading": "Downloading {file}...",
+    "download_failed": "Failed to download {file}: {error}",
+    "restore_hint": "Your backup is at {path} if you need to restore.",
+    "success": "Updated to {version}. Restart the script to use the new version."
+  },
+
   "errors": {
     "missing_config": "Missing YouTube config: {fields}. Run 'python3 stream.py --install' first.",
     "broadcast_complete": "Broadcast {broadcast_id} is in 'complete' state and cannot be restarted. Run 'python3 stream.py --install' to create a new broadcast.",

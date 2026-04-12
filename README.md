@@ -115,6 +115,14 @@ python3 stream.py --install
 
 Re-running `--install` overwrites configuration and creates new YouTube resources if needed.
 
+### Update to the latest version
+
+```bash
+python3 stream.py --update
+```
+
+Backs up the current `stream.py` and `resources.json` into a versioned zip file (e.g., `stream.v0.1.3.bak.zip`), then downloads and replaces both files from the latest GitHub release.
+
 ## Crontab
 
 `--install` registers two cron entries (default: April through October):
