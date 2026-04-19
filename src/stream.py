@@ -24,6 +24,20 @@ def _can_import(module_name):
         return False
 
 
+def _pip_install(packages):
+    """Install packages via pip, tolerating PEP 668 externally-managed environments.
+
+    Installs into the user site with ``--user`` so no root access is required.
+    Falls back to ``--break-system-packages`` when the interpreter is marked
+    externally-managed (Ubuntu/Debian/Mint 23.04+).
+    """
+    base = [sys.executable, "-m", "pip", "install", "--user"]
+    try:
+        subprocess.check_call(base + packages)
+    except subprocess.CalledProcessError:
+        subprocess.check_call(base + ["--break-system-packages"] + packages)
+
+
 def _ensure_dependencies():
     """Install any missing Python packages via pip."""
     required = [
@@ -39,7 +53,7 @@ def _ensure_dependencies():
         required.append(("tomli", "tomli"))
     missing = [pkg for mod, pkg in required if not _can_import(mod)]
     if missing:
-        subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing)
+        _pip_install(missing)
         import importlib
         importlib.invalidate_caches()
 
