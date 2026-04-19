@@ -19,6 +19,7 @@ All Python packages are self-installed by `stream.py` on first run. No `requirem
 | `requests` | HTTP transport used internally by `google-auth` |
 | `tomli` | TOML parser for Python < 3.11 (built-in as `tomllib` in 3.11+) |
 | `tomli-w` | TOML writer for generating config files |
+| `croniter` | Evaluates cron expressions to determine whether `--recover` is inside the daily stream window |
 
 ## External Services
 

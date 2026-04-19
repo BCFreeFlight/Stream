@@ -131,6 +131,27 @@ class TestMainDispatch:
             stream.main()
         mock_update.assert_called_once()
 
+    def test_main_recover(self):
+        """--recover dispatches to do_recover."""
+        with patch("sys.argv", ["stream.py", "--recover"]), \
+             patch("stream.do_recover") as mock_recover:
+            stream.main()
+        mock_recover.assert_called_once()
+
+    def test_main_uninstall(self):
+        """--uninstall dispatches to do_uninstall."""
+        with patch("sys.argv", ["stream.py", "--uninstall"]), \
+             patch("stream.do_uninstall") as mock_uninstall:
+            stream.main()
+        mock_uninstall.assert_called_once()
+
+    def test_main_reinstall(self):
+        """--reinstall dispatches to do_reinstall."""
+        with patch("sys.argv", ["stream.py", "--reinstall"]), \
+             patch("stream.do_reinstall") as mock_reinstall:
+            stream.main()
+        mock_reinstall.assert_called_once()
+
     def test_main_rollback_with_version(self):
         """--roll-back v0.1.2 dispatches to do_rollback with the version string."""
         with patch("sys.argv", ["stream.py", "--roll-back", "v0.1.2"]), \
