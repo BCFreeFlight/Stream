@@ -38,13 +38,13 @@ This downloads the latest release and launches the interactive setup wizard. Any
    ```
 
    This will:
-   - Prompt for all configuration values
+   - Prompt for Google OAuth credentials, RTSP URL, broadcast title/privacy/category, and cron schedule
    - Install `ffmpeg` if not already present
    - Install required Python packages
    - Open a browser for Google OAuth 2.0 authorization
-   - Create a YouTube broadcast and stream (or use ones you provide)
+   - Create a YouTube broadcast via `liveBroadcasts.insert` and a live-stream resource via `liveStreams.insert`; the resulting `streamId`, `streamURL`, `backupStreamUrl`, and `streamKey` are written to `config.toml` automatically — you do **not** need to copy a stream key from YouTube Studio
    - Write `config.toml` and `.env` beside the script
-   - Detect your terminal emulator and register cron jobs
+   - Detect your terminal emulator and register cron jobs (start, stop, `@reboot` recover)
    - Print the stable YouTube URL for your stream
 
 ## Google Cloud Setup
@@ -76,10 +76,10 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `youtube.categoryId` | string | `22` | YouTube category ID (22 = People & Blogs) |
 | `youtube.enableMonitorStream` | boolean | `false` | Enable the YouTube monitor stream |
 | `youtube.broadcastId` | string | *(auto-created or prompted)* | Persistent YouTube broadcast ID |
-| `youtube.streamId` | string | *(auto-populated)* | YouTube stream resource ID |
-| `youtube.streamURL` | string | *(auto-created or prompted)* | RTMP ingest URL |
-| `youtube.backupStreamUrl` | string | *(auto-created or prompted)* | Backup RTMP ingest URL (used on retry) |
-| `youtube.streamKey` | string | *(auto-created or prompted)* | Stream key for the RTMP URL |
+| `youtube.streamId` | string | *(auto-populated)* | YouTube stream resource ID (created by `liveStreams.insert` during install) |
+| `youtube.streamURL` | string | *(auto-populated)* | RTMP ingest URL (returned by `liveStreams.insert`) |
+| `youtube.backupStreamUrl` | string | *(auto-populated)* | Backup RTMP ingest URL (used on retry) |
+| `youtube.streamKey` | string | *(auto-populated)* | Stream key for the RTMP URL (returned by `liveStreams.insert`) |
 | `pidFile` | string | `./stream.pid` | PID file path |
 | `stopSentinel` | string | `./stream.stop` | Stop sentinel file path |
 | `logDir` | string | `./logs` | Log directory |
@@ -117,6 +117,16 @@ python3 stream.py --stop
 
 Stops the ffmpeg process gracefully and transitions the broadcast to `complete`, archiving it as a VOD on the channel. The next `--start` will create a fresh broadcast automatically.
 
+### Recover after a reboot
+
+```bash
+python3 stream.py --recover
+```
+
+Checks whether the current time is inside the daily `cron.start`/`cron.stop` window. If it is — and no stream is already running — it delegates to `--start` to resume streaming. If the current time is outside the window (or a stream is already active) it exits cleanly.
+
+`--install` registers this as an `@reboot` cron entry, so if the machine loses power and reboots during the streaming window, the stream automatically resumes.
+
 ### Re-run setup
 
 ```bash
@@ -124,6 +134,28 @@ python3 stream.py --install
 ```
 
 Re-running `--install` overwrites configuration and creates new YouTube resources if needed.
+
+### Uninstall
+
+```bash
+python3 stream.py --uninstall
+```
+
+Stops any running stream, archives the current YouTube broadcast, and removes all cron entries (start, stop, and `@reboot` recover). `config.toml` and `.env` are **left on disk** so a later `--install` can reuse the existing credentials. Delete those files manually if you want a full wipe.
+
+### Reinstall from scratch
+
+```bash
+python3 stream.py --reinstall
+```
+
+Clean-slate setup. After a `yes` confirmation prompt, this chains:
+
+1. **Uninstall** — stops the stream, archives the broadcast, removes cron entries
+2. **Delete** — wipes `config.toml` and `.env`
+3. **Install** — re-runs the setup wizard from scratch
+
+`logs/` and `backup/` are preserved. Use this when you want to re-enter credentials or switch to a different Google account.
 
 ### Update to the latest version
 
@@ -160,14 +192,15 @@ Backups are created automatically by `--update` and stored in the `backup/` dire
 
 ## Crontab
 
-`--install` registers two cron entries (default: April through October):
+`--install` registers three cron entries (default: April through October):
 
 | Job | Default Schedule | Behavior |
 |-----|-----------------|----------|
 | Start | `30 6 1-31 4-10 *` (6:30 AM) | Opens a terminal window and starts streaming |
 | Stop | `25 18 1-31 4-10 *` (6:25 PM) | Runs directly (no terminal) to stop the stream |
+| Recover | `@reboot` | Runs `--recover` headless at boot; resumes the stream if the current time is inside the window |
 
-The start job opens a single terminal window titled "BC Free Flight Stream". When the stop job runs, the stream process exits and the terminal window closes. This prevents terminal window accumulation over time.
+The start job opens a single terminal window titled "BC Free Flight Stream". When the stop job runs, the stream process exits and the terminal window closes. This prevents terminal window accumulation over time. The recover job provides crash resilience: if the machine reboots during the streaming window, the stream is picked back up automatically.
 
 Running `--install` again updates entries without creating duplicates.
 

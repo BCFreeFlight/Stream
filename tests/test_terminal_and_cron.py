@@ -78,6 +78,15 @@ class TestBuildCronLine:
         line = stream._build_cron_line(schedule, "gnome-terminal", "start")
         assert line.startswith(schedule)
 
+    def test_build_cron_line_recover(self):
+        """A recover cron line uses @reboot, invokes --recover, and has no terminal wrapper."""
+        line = stream._build_cron_line(None, "gnome-terminal", "recover")
+        assert line.startswith("@reboot ")
+        assert "--recover" in line
+        assert line.endswith(stream.CRON_MARKER)
+        assert "gnome-terminal" not in line
+        assert "DISPLAY=:0" not in line
+
 
 # ── Cron Management Helpers ─────────────────────────────────────────────────
 
@@ -136,7 +145,7 @@ class TestReadCurrentCrontab:
 
 class TestRegisterCronEntries:
     def test_register_cron_entries_writes(self, sample_config):
-        """register_cron_entries writes a crontab containing both start and stop lines."""
+        """register_cron_entries writes a crontab with start, stop, and recover lines."""
         with patch("stream._read_current_crontab", return_value=""), \
              patch("stream.subprocess.run") as mock_run:
             stream.register_cron_entries(sample_config)
@@ -145,6 +154,8 @@ class TestRegisterCronEntries:
             written = mock_run.call_args.kwargs.get("input") or mock_run.call_args[1].get("input", "")
             assert "--start" in written
             assert "--stop" in written
+            assert "--recover" in written
+            assert "@reboot" in written
             assert stream.CRON_MARKER in written
 
     def test_register_cron_entries_replaces_old(self, sample_config):
@@ -158,8 +169,8 @@ class TestRegisterCronEntries:
             written = mock_run.call_args.kwargs.get("input") or mock_run.call_args[1].get("input", "")
             assert "keep-this" in written
             assert "old entry" not in written
-            # New entries should still be present
-            assert written.count(stream.CRON_MARKER) == 2
+            # Three new entries: start, stop, recover
+            assert written.count(stream.CRON_MARKER) == 3
 
     def test_register_cron_entries_with_logger(self, sample_config, mock_logger):
         """When a logger is passed, logger.info is called."""

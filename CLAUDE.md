@@ -151,8 +151,11 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 | Switch | Behavior |
 |--------|----------|
 | `--install` | Interactive setup: prompts for config, writes files, installs deps, runs OAuth, creates YouTube resources, registers cron |
+| `--uninstall` | Stops any running stream, archives the broadcast, and removes all cron entries (start/stop/@reboot recover). `config.toml` and `.env` are **preserved** so the user can re-install later without re-entering credentials. |
+| `--reinstall` | Destructive clean-slate setup. Prompts for `yes` confirmation, then chains `--uninstall` → delete `config.toml` + `.env` → `--install`. `logs/` and `backup/` are preserved. |
 | `--start` | Resumes streaming to the existing YouTube broadcast. Runs in the foreground, blocking the terminal. |
 | `--stop` | Writes the stop sentinel, signals the running process, waits for graceful shutdown. The broadcast is **not** completed — it stays alive for reuse. |
+| `--recover` | Crash-recovery. If the current time falls inside the daily `cron.start`/`cron.stop` window (and no stream is already running), delegates to `--start`. Otherwise exits cleanly. Registered as an `@reboot` cron entry by `--install`. |
 | `--update` | Backs up current files to a versioned zip in `backup/`, downloads the latest release from GitHub, and replaces `stream.py` and `resources.toml`. |
 | `--roll-back [VERSION]` | Restores `stream.py` and `resources.toml` from a backup. Without a version, lists available backups interactively. |
 
@@ -174,6 +177,7 @@ Required Python packages:
 - `requests`
 - `tomli` (Python < 3.11 only; 3.11+ uses the built-in `tomllib`)
 - `tomli-w`
+- `croniter` (evaluates cron expressions for `--recover` window checks)
 
 `ffmpeg` is a system dependency installed via `apt install -y ffmpeg` during `--install` if not already on PATH. It is never installed during `--start` or `--stop`.
 
@@ -273,10 +277,11 @@ The retry loop does not have a maximum retry count. It runs until `--stop` is ca
 
 ## Crontab
 
-`--install` self-registers two crontab entries using the expressions in `config.toml` under `cron.start` and `cron.stop`. The default schedule runs April 1 through October 31:
+`--install` self-registers three crontab entries using the expressions in `config.toml` under `cron.start` and `cron.stop`. The default schedule runs April 1 through October 31:
 
 - **Start:** `30 6 1-31 4-10 *` (6:30am daily) — opens a terminal window titled "BC Free Flight Stream"
 - **Stop:** `25 18 1-31 4-10 *` (6:25pm daily) — runs directly without a terminal window
+- **Recover:** `@reboot` — runs `--recover` headless at boot so the stream resumes automatically after a power loss or reboot that falls inside the daily window
 
 The start cron opens a single terminal window. When the stop cron fires, the stream process exits and the terminal window closes. This prevents terminal window accumulation over time — only one window exists at a time.
 

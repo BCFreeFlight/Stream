@@ -33,6 +33,7 @@ def _ensure_dependencies():
         ("dotenv", "python-dotenv"),
         ("requests", "requests"),
         ("tomli_w", "tomli-w"),
+        ("croniter", "croniter"),
     ]
     if sys.version_info < (3, 11):
         required.append(("tomli", "tomli"))
@@ -59,6 +60,7 @@ from pathlib import Path
 
 # ── Third-Party ──────────────────────────────────────────────────────────────
 
+from croniter import croniter
 from dotenv import load_dotenv, set_key
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
@@ -876,14 +878,17 @@ def _build_cron_line(schedule, terminal, action):
     """Build a single crontab entry for the given action.
 
     --start runs inside a visible terminal window (closes when the process exits).
-    --stop runs directly without a terminal — it sends SIGTERM and exits quickly.
-    This prevents terminal window accumulation over time.
+    --stop and --recover run headless — stop exits quickly; recover runs at
+    @reboot when no graphical session exists to host a terminal.
     """
     script_path = Path(__file__).resolve()
     python = sys.executable
 
     if action == "stop":
         return f"{schedule} {python} {script_path} --stop {CRON_MARKER}"
+
+    if action == "recover":
+        return f"@reboot {python} {script_path} --recover {CRON_MARKER}"
 
     title = "BC Free Flight Stream"
     if terminal == "gnome-terminal":
@@ -915,9 +920,10 @@ def register_cron_entries(config, logger=None):
     terminal = config["terminal"]
     start_line = _build_cron_line(config["cron"]["start"], terminal, "start")
     stop_line = _build_cron_line(config["cron"]["stop"], terminal, "stop")
+    recover_line = _build_cron_line(None, terminal, "recover")
 
     lines = _remove_marker_lines(_read_current_crontab())
-    lines.extend([start_line, stop_line])
+    lines.extend([start_line, stop_line, recover_line])
 
     new_crontab = "\n".join(lines) + "\n"
     subprocess.run(
@@ -1119,25 +1125,6 @@ def prompt_all_config_values(res, existing=None):
         default=defaults["broadcastId"],
     )
 
-    # ── YouTube Stream ──
-    print(sections["youtube_stream"])
-    stream_key = _smart_prompt(
-        prompts["streamKey"],
-        _get_nested(ex, "youtube", "streamKey"),
-        default=defaults["streamKey"],
-        guide=res["install"]["youtube_stream_guide"],
-    )
-    stream_url = _smart_prompt(
-        prompts["streamURL"],
-        _get_nested(ex, "youtube", "streamURL"),
-        default=defaults["streamURL"],
-    )
-    backup_stream_url = _smart_prompt(
-        prompts["backupStreamUrl"],
-        _get_nested(ex, "youtube", "backupStreamUrl"),
-        default=defaults["backupStreamUrl"],
-    )
-
     # ── Schedule (cron) ──
     print(sections["schedule"])
     cron_setup = _prompt(
@@ -1177,9 +1164,9 @@ def prompt_all_config_values(res, existing=None):
             ),
             "broadcastId": broadcast_id,
             "streamId": _get_nested(ex, "youtube", "streamId"),
-            "streamURL": stream_url,
-            "backupStreamUrl": backup_stream_url,
-            "streamKey": stream_key,
+            "streamURL": _get_nested(ex, "youtube", "streamURL"),
+            "backupStreamUrl": _get_nested(ex, "youtube", "backupStreamUrl"),
+            "streamKey": _get_nested(ex, "youtube", "streamKey"),
         },
         "pidFile": _get_nested(ex, "pidFile", default="./stream.pid"),
         "stopSentinel": _get_nested(ex, "stopSentinel", default="./stream.stop"),
@@ -1253,13 +1240,17 @@ def _setup_youtube_resources(config, creds, res):
         yt["broadcastId"] = create_broadcast(youtube, config, logger)
 
     if not yt.get("streamId"):
-        stream_id = find_stream_by_key(youtube, yt["streamKey"], logger)
-        yt["streamId"] = stream_id or ""
-
-    if yt["broadcastId"] and yt.get("streamId"):
-        bind_stream_to_broadcast(
-            youtube, yt["broadcastId"], yt["streamId"], logger
+        stream_id, rtmp_url, backup_url, stream_key = create_stream_resource(
+            youtube, logger
         )
+        yt["streamId"] = stream_id
+        yt["streamURL"] = rtmp_url
+        yt["backupStreamUrl"] = backup_url
+        yt["streamKey"] = stream_key
+
+    bind_stream_to_broadcast(
+        youtube, yt["broadcastId"], yt["streamId"], logger
+    )
 
     if yt["broadcastId"] and yt.get("categoryId"):
         apply_broadcast_category(
@@ -1324,6 +1315,67 @@ def do_install():
         print(msgs["cron_skipped"])
 
     _print_install_summary(config, res)
+
+
+# ── --uninstall Command ──────────────────────────────────────────────────────
+
+
+def do_uninstall():
+    """Stop a running stream and remove all cron entries. Config is preserved.
+
+    This removes the start, stop, and @reboot recover cron lines so the script
+    is no longer triggered automatically. `config.toml`, `.env`, logs, and
+    backups are left on disk so the user can re-enable everything with
+    `--install` later without losing state.
+    """
+    config = load_config()
+
+    if _stream_process_already_running(config) or config["youtube"].get("broadcastId"):
+        do_stop()
+
+    remove_cron_entries()
+    print("Cron entries removed. Config and secrets were preserved.")
+    print(f"  Config:  {SCRIPT_DIR / 'config.toml'}")
+    print(f"  Secrets: {SCRIPT_DIR / '.env'}")
+    print("Delete these manually if you want a full wipe.")
+
+
+# ── --reinstall Command ──────────────────────────────────────────────────────
+
+
+def _confirm_reinstall():
+    """Prompt for destructive-action confirmation. Return True if the user typed 'yes'."""
+    print("This will stop the stream, remove cron entries, and delete config.toml and .env.")
+    print("Logs and update backups are preserved.")
+    answer = input("Type 'yes' to continue: ").strip().lower()
+    return answer == "yes"
+
+
+def _delete_config_files():
+    """Delete config.toml and .env if they exist."""
+    for name in ("config.toml", ".env"):
+        path = SCRIPT_DIR / name
+        if path.exists():
+            path.unlink()
+
+
+def do_reinstall():
+    """Wipe existing config/secrets and run the install wizard from scratch.
+
+    Chains uninstall (stop stream, archive broadcast, remove cron) → delete
+    config.toml and .env → install. Logs and update backups are preserved.
+    """
+    if not _confirm_reinstall():
+        print("Reinstall cancelled.")
+        return
+
+    config_path = SCRIPT_DIR / "config.toml"
+    if config_path.exists():
+        do_uninstall()
+
+    _delete_config_files()
+    print("Existing config and secrets removed. Starting fresh install...\n")
+    do_install()
 
 
 # ── --start Command ──────────────────────────────────────────────────────────
@@ -1560,6 +1612,62 @@ def do_stop():
     logger.close()
 
 
+# ── --recover Command ────────────────────────────────────────────────────────
+
+
+def is_in_stream_window(config, now=None):
+    """Return True if `now` falls inside today's daily start/stop cron window.
+
+    Compares the most recent fire time of cron.start against cron.stop: if the
+    last start fired more recently than the last stop, we are inside the window.
+    This correctly handles month-of-year and day-of-month ranges without
+    reimplementing cron semantics.
+    """
+    if now is None:
+        now = datetime.datetime.now()
+    # croniter.get_prev is strictly exclusive of the reference time; adding a
+    # 1-second epsilon makes the transition inclusive at the fire second
+    # (so "now == scheduled start time" is treated as inside the window).
+    reference = now + datetime.timedelta(seconds=1)
+    last_start = croniter(config["cron"]["start"], reference).get_prev(datetime.datetime)
+    last_stop = croniter(config["cron"]["stop"], reference).get_prev(datetime.datetime)
+    return last_start > last_stop
+
+
+def _stream_process_already_running(config):
+    """Return True if a live stream process is already recorded in the PID file."""
+    pid = read_pid_file(config)
+    return pid is not None and _is_process_running(pid)
+
+
+def do_recover():
+    """Restart the stream if the current time falls inside the daily window.
+
+    Intended to be run at boot (via @reboot cron) so that a power loss or
+    reboot during the streaming window automatically resumes the stream.
+    If outside the window, or if a stream is already running, exits cleanly.
+    """
+    config = load_config()
+    load_env()
+    logger = create_logger(config)
+
+    logger.info(f"BC Free Flight Stream {__version__} — recover")
+
+    if _stream_process_already_running(config):
+        logger.info("Stream process already running — recover is a no-op")
+        logger.close()
+        return
+
+    if not is_in_stream_window(config, datetime.datetime.now()):
+        logger.info("Current time is outside the daily stream window — no action")
+        logger.close()
+        return
+
+    logger.info("Inside stream window — starting stream")
+    logger.close()
+    do_start()
+
+
 # ── --update Command ─────────────────────────────────────────────────────────
 
 
@@ -1754,8 +1862,14 @@ def main():
     parser = argparse.ArgumentParser(description="RTSP to YouTube Live stream proxy")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--install", action="store_true", help="Interactive first-time setup")
+    group.add_argument("--uninstall", action="store_true",
+                       help="Stop the stream and remove all cron entries (config is preserved)")
+    group.add_argument("--reinstall", action="store_true",
+                       help="Uninstall, delete config.toml and .env, then run install from scratch")
     group.add_argument("--start", action="store_true", help="Start the stream")
     group.add_argument("--stop", action="store_true", help="Stop the stream")
+    group.add_argument("--recover", action="store_true",
+                       help="Start the stream if the current time is within the daily window")
     group.add_argument("--update", action="store_true", help="Update to the latest release")
     group.add_argument("--roll-back", nargs="?", const="__prompt__", metavar="VERSION",
                        help="Roll back to a previous version (interactive if no version given)")
@@ -1763,10 +1877,16 @@ def main():
 
     if args.install:
         do_install()
+    elif args.uninstall:
+        do_uninstall()
+    elif args.reinstall:
+        do_reinstall()
     elif args.start:
         do_start()
     elif args.stop:
         do_stop()
+    elif args.recover:
+        do_recover()
     elif args.update:
         do_update()
     elif args.roll_back:
