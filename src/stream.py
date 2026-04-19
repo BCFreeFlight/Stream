@@ -24,6 +24,28 @@ def _can_import(module_name):
         return False
 
 
+def _pip_install(packages):
+    """Install packages via pip, tolerating PEP 668 externally-managed environments.
+
+    Tries a plain install first so venvs and pre-PEP-668 interpreters keep
+    working. Falls back to ``--user --break-system-packages`` on Debian-family
+    distros (Ubuntu/Mint 23.04+) that mark the system Python as
+    externally-managed, then adds the user site to ``sys.path`` so the freshly
+    installed packages become importable in this same process.
+    """
+    base = [sys.executable, "-m", "pip", "install"]
+    try:
+        subprocess.check_call(base + packages)
+        return
+    except subprocess.CalledProcessError:
+        pass
+    subprocess.check_call(base + ["--user", "--break-system-packages"] + packages)
+    import site
+    user_site = site.getusersitepackages()
+    if user_site and user_site not in sys.path:
+        site.addsitedir(user_site)
+
+
 def _ensure_dependencies():
     """Install any missing Python packages via pip."""
     required = [
@@ -39,7 +61,7 @@ def _ensure_dependencies():
         required.append(("tomli", "tomli"))
     missing = [pkg for mod, pkg in required if not _can_import(mod)]
     if missing:
-        subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing)
+        _pip_install(missing)
         import importlib
         importlib.invalidate_caches()
 
