@@ -27,15 +27,23 @@ def _can_import(module_name):
 def _pip_install(packages):
     """Install packages via pip, tolerating PEP 668 externally-managed environments.
 
-    Installs into the user site with ``--user`` so no root access is required.
-    Falls back to ``--break-system-packages`` when the interpreter is marked
-    externally-managed (Ubuntu/Debian/Mint 23.04+).
+    Tries a plain install first so venvs and pre-PEP-668 interpreters keep
+    working. Falls back to ``--user --break-system-packages`` on Debian-family
+    distros (Ubuntu/Mint 23.04+) that mark the system Python as
+    externally-managed, then adds the user site to ``sys.path`` so the freshly
+    installed packages become importable in this same process.
     """
-    base = [sys.executable, "-m", "pip", "install", "--user"]
+    base = [sys.executable, "-m", "pip", "install"]
     try:
         subprocess.check_call(base + packages)
+        return
     except subprocess.CalledProcessError:
-        subprocess.check_call(base + ["--break-system-packages"] + packages)
+        pass
+    subprocess.check_call(base + ["--user", "--break-system-packages"] + packages)
+    import site
+    user_site = site.getusersitepackages()
+    if user_site and user_site not in sys.path:
+        site.addsitedir(user_site)
 
 
 def _ensure_dependencies():
