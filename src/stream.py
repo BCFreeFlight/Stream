@@ -450,16 +450,18 @@ def _api_get_broadcast_lifecycle(youtube, broadcast_id):
     return items[0]["status"]["lifeCycleStatus"] if items else None
 
 
-def _api_list_my_broadcasts(youtube, status_filter=None):
+def _api_list_my_broadcasts(youtube):
     """Call liveBroadcasts.list with mine=True and return the items list.
 
-    If status_filter is given (e.g. 'active'), only broadcasts with that
-    broadcastStatus are returned.
+    The YouTube Data API rejects requests that combine ``mine=True`` with a
+    ``broadcastStatus`` filter, so callers that need to filter by lifecycle
+    must do so client-side using ``item["status"]["lifeCycleStatus"]``.
     """
-    kwargs = {"part": "id,status", "mine": True, "maxResults": 50}
-    if status_filter:
-        kwargs["broadcastStatus"] = status_filter
-    resp = youtube.liveBroadcasts().list(**kwargs).execute()
+    resp = (
+        youtube.liveBroadcasts()
+        .list(part="id,status", mine=True, maxResults=50)
+        .execute()
+    )
     return resp.get("items", [])
 
 
@@ -635,27 +637,31 @@ def transition_to_live(youtube, broadcast_id, logger):
 def cleanup_orphaned_broadcasts(youtube, current_broadcast_id, logger):
     """Complete any orphaned broadcasts left behind by previous crashes.
 
-    Queries for active broadcasts and transitions any that are not the current
-    broadcast to complete, freeing up YouTube's per-channel broadcast slots.
+    Lists the channel's broadcasts and transitions any in a live-ish lifecycle
+    (``live``, ``ready``, ``testing``, ``created``) to ``complete`` — except
+    for the currently configured broadcast. Filtering happens client-side
+    because the YouTube Data API no longer accepts a ``broadcastStatus``
+    filter when combined with ``mine=True``.
     """
-    for status_filter in ("active", "live"):
-        try:
-            items = _api_list_my_broadcasts(youtube, status_filter)
-        except Exception as exc:
-            logger.warn(f"Could not list {status_filter} broadcasts: {exc}")
-            continue
+    try:
+        items = _api_list_my_broadcasts(youtube)
+    except Exception as exc:
+        logger.warn(f"Could not list broadcasts: {exc}")
+        return
 
-        for item in items:
-            bid = item["id"]
-            if bid == current_broadcast_id:
-                continue
-            lifecycle = item.get("status", {}).get("lifeCycleStatus", "")
-            if lifecycle in ("live", "ready", "testing", "created"):
-                try:
-                    _api_transition_broadcast(youtube, bid, "complete")
-                    logger.info(f"Completed orphaned broadcast: {bid} (was {lifecycle})")
-                except Exception as exc:
-                    logger.warn(f"Could not complete orphaned broadcast {bid}: {exc}")
+    orphaned_lifecycles = ("live", "ready", "testing", "created")
+    for item in items:
+        bid = item["id"]
+        if bid == current_broadcast_id:
+            continue
+        lifecycle = item.get("status", {}).get("lifeCycleStatus", "")
+        if lifecycle not in orphaned_lifecycles:
+            continue
+        try:
+            _api_transition_broadcast(youtube, bid, "complete")
+            logger.info(f"Completed orphaned broadcast: {bid} (was {lifecycle})")
+        except Exception as exc:
+            logger.warn(f"Could not complete orphaned broadcast {bid}: {exc}")
 
 
 def _create_fresh_broadcast(youtube, config, logger):
