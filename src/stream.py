@@ -748,19 +748,51 @@ def encode_rtsp_credentials(url):
 
 
 def build_ffmpeg_command(config, rtmp_url, stream_key):
-    """Construct the ffmpeg command list from configuration values."""
+    """Construct the ffmpeg command list from configuration values.
+
+    When ``mute`` is true, a silent AAC track is injected as a second input
+    and mapped alongside the camera's video. YouTube's live ingest rejects
+    video-only streams (status stays ``inactive`` forever), so a silent
+    audio track is required to keep the broadcast viable while delivering
+    a functionally-muted experience to viewers.
+    """
     stream = config["stream"]
     cmd = ["ffmpeg", "-re", "-rtsp_transport", "tcp", "-i", stream["rtspUrl"]]
+    cmd.extend(_silent_audio_input_flags(stream))
+    cmd.extend(_stream_map_flags(stream))
     cmd.extend(["-vcodec", stream["videoCodec"]])
     cmd.extend(_audio_flags(stream))
     cmd.extend(["-f", "flv", f"{rtmp_url}/{stream_key}"])
     return cmd
 
 
+def _silent_audio_input_flags(stream_config):
+    """Return flags adding a silent AAC input when the stream is muted."""
+    if not stream_config["mute"]:
+        return []
+    return [
+        "-f", "lavfi",
+        "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+    ]
+
+
+def _stream_map_flags(stream_config):
+    """Map camera video + silent audio when muted; default mapping otherwise."""
+    if not stream_config["mute"]:
+        return []
+    return ["-map", "0:v:0", "-map", "1:a:0"]
+
+
 def _audio_flags(stream_config):
-    """Return ffmpeg audio flags: -an if muted, otherwise -acodec <codec>."""
+    """Return ffmpeg audio codec flags.
+
+    Muted streams encode the injected silent track to AAC (there is no real
+    audio to copy). Unmuted streams honor the configured audio codec.
+    ``-shortest`` ensures ffmpeg exits when the RTSP input ends rather than
+    running forever against the infinite silent source.
+    """
     if stream_config["mute"]:
-        return ["-an"]
+        return ["-c:a", "aac", "-b:a", "128k", "-shortest"]
     return ["-acodec", stream_config["audioCodec"]]
 
 
