@@ -47,9 +47,10 @@ class TestEncodeRtspCredentials:
 
 
 class TestAudioFlags:
-    def test_audio_flags_muted(self, stream):
+    def test_audio_flags_muted_injects_silent_aac(self, stream):
+        """Muted streams transcode the silent source to AAC — not -an."""
         result = stream._audio_flags({"mute": True, "audioCodec": "aac"})
-        assert result == ["-an"]
+        assert result == ["-c:a", "aac", "-b:a", "128k", "-shortest"]
 
     def test_audio_flags_not_muted(self, stream):
         result = stream._audio_flags({"mute": False, "audioCodec": "aac"})
@@ -60,29 +61,70 @@ class TestAudioFlags:
         assert result == ["-acodec", "copy"]
 
 
+# ── _silent_audio_input_flags ───────────────────────────────────────────────
+
+
+class TestSilentAudioInputFlags:
+    def test_muted_adds_lavfi_anullsrc_input(self, stream):
+        result = stream._silent_audio_input_flags({"mute": True})
+        assert result == [
+            "-f", "lavfi",
+            "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        ]
+
+    def test_not_muted_adds_nothing(self, stream):
+        assert stream._silent_audio_input_flags({"mute": False}) == []
+
+
+# ── _stream_map_flags ────────────────────────────────────────────────────────
+
+
+class TestStreamMapFlags:
+    def test_muted_maps_camera_video_and_silent_audio(self, stream):
+        result = stream._stream_map_flags({"mute": True})
+        assert result == ["-map", "0:v:0", "-map", "1:a:0"]
+
+    def test_not_muted_uses_default_mapping(self, stream):
+        assert stream._stream_map_flags({"mute": False}) == []
+
+
 # ── build_ffmpeg_command ────────────────────────────────────────────────────
 
 
 class TestBuildFfmpegCommand:
-    def test_build_ffmpeg_command_full(self, stream, sample_config):
-        """Muted stream produces -an flag and correct full command."""
+    def test_build_ffmpeg_command_muted_injects_silent_aac(self, stream, sample_config):
+        """Muted stream adds a second lavfi input and maps both streams."""
         cmd = stream.build_ffmpeg_command(sample_config, "rtmp://url", "key123")
         assert cmd == [
             "ffmpeg", "-re", "-rtsp_transport", "tcp",
             "-i", "rtsp://cam.local/live",
+            "-f", "lavfi",
+            "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-map", "0:v:0", "-map", "1:a:0",
             "-vcodec", "copy",
-            "-an",
+            "-c:a", "aac", "-b:a", "128k", "-shortest",
             "-f", "flv", "rtmp://url/key123",
         ]
 
     def test_build_ffmpeg_command_with_audio(self, stream, sample_config):
-        """Non-muted stream includes -acodec instead of -an."""
+        """Non-muted stream uses a single input, no lavfi, no stream mapping."""
         sample_config["stream"]["mute"] = False
         sample_config["stream"]["audioCodec"] = "aac"
         cmd = stream.build_ffmpeg_command(sample_config, "rtmp://url", "key123")
         assert "-acodec" in cmd
         assert "aac" in cmd
         assert "-an" not in cmd
+        assert "lavfi" not in cmd
+        assert "-map" not in cmd
+
+    def test_build_ffmpeg_command_muted_has_lavfi_input_before_output(
+        self, stream, sample_config
+    ):
+        """The silent input must appear before the output URL for ffmpeg to parse it."""
+        cmd = stream.build_ffmpeg_command(sample_config, "rtmp://url", "key123")
+        lavfi_idx = cmd.index("lavfi")
+        flv_idx = cmd.index("flv")
+        assert lavfi_idx < flv_idx
 
 
 # ── select_rtmp_url ─────────────────────────────────────────────────────────
