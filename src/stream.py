@@ -76,9 +76,11 @@ import json
 import os
 import signal
 import shutil
+import threading
 import time
 from collections import namedtuple
 from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 # ── Third-Party ──────────────────────────────────────────────────────────────
 
@@ -448,16 +450,18 @@ def _api_get_broadcast_lifecycle(youtube, broadcast_id):
     return items[0]["status"]["lifeCycleStatus"] if items else None
 
 
-def _api_list_my_broadcasts(youtube, status_filter=None):
+def _api_list_my_broadcasts(youtube):
     """Call liveBroadcasts.list with mine=True and return the items list.
 
-    If status_filter is given (e.g. 'active'), only broadcasts with that
-    broadcastStatus are returned.
+    The YouTube Data API rejects requests that combine ``mine=True`` with a
+    ``broadcastStatus`` filter, so callers that need to filter by lifecycle
+    must do so client-side using ``item["status"]["lifeCycleStatus"]``.
     """
-    kwargs = {"part": "id,status", "mine": True, "maxResults": 50}
-    if status_filter:
-        kwargs["broadcastStatus"] = status_filter
-    resp = youtube.liveBroadcasts().list(**kwargs).execute()
+    resp = (
+        youtube.liveBroadcasts()
+        .list(part="id,status", mine=True, maxResults=50)
+        .execute()
+    )
     return resp.get("items", [])
 
 
@@ -633,27 +637,31 @@ def transition_to_live(youtube, broadcast_id, logger):
 def cleanup_orphaned_broadcasts(youtube, current_broadcast_id, logger):
     """Complete any orphaned broadcasts left behind by previous crashes.
 
-    Queries for active broadcasts and transitions any that are not the current
-    broadcast to complete, freeing up YouTube's per-channel broadcast slots.
+    Lists the channel's broadcasts and transitions any in a live-ish lifecycle
+    (``live``, ``ready``, ``testing``, ``created``) to ``complete`` — except
+    for the currently configured broadcast. Filtering happens client-side
+    because the YouTube Data API no longer accepts a ``broadcastStatus``
+    filter when combined with ``mine=True``.
     """
-    for status_filter in ("active", "live"):
-        try:
-            items = _api_list_my_broadcasts(youtube, status_filter)
-        except Exception as exc:
-            logger.warn(f"Could not list {status_filter} broadcasts: {exc}")
-            continue
+    try:
+        items = _api_list_my_broadcasts(youtube)
+    except Exception as exc:
+        logger.warn(f"Could not list broadcasts: {exc}")
+        return
 
-        for item in items:
-            bid = item["id"]
-            if bid == current_broadcast_id:
-                continue
-            lifecycle = item.get("status", {}).get("lifeCycleStatus", "")
-            if lifecycle in ("live", "ready", "testing", "created"):
-                try:
-                    _api_transition_broadcast(youtube, bid, "complete")
-                    logger.info(f"Completed orphaned broadcast: {bid} (was {lifecycle})")
-                except Exception as exc:
-                    logger.warn(f"Could not complete orphaned broadcast {bid}: {exc}")
+    orphaned_lifecycles = ("live", "ready", "testing", "created")
+    for item in items:
+        bid = item["id"]
+        if bid == current_broadcast_id:
+            continue
+        lifecycle = item.get("status", {}).get("lifeCycleStatus", "")
+        if lifecycle not in orphaned_lifecycles:
+            continue
+        try:
+            _api_transition_broadcast(youtube, bid, "complete")
+            logger.info(f"Completed orphaned broadcast: {bid} (was {lifecycle})")
+        except Exception as exc:
+            logger.warn(f"Could not complete orphaned broadcast {bid}: {exc}")
 
 
 def _create_fresh_broadcast(youtube, config, logger):
@@ -717,6 +725,28 @@ def ensure_broadcast_live(youtube, broadcast_id, config, logger, res=None):
 # ── ffmpeg ───────────────────────────────────────────────────────────────────
 
 
+def encode_rtsp_credentials(url):
+    """Percent-encode reserved characters in the userinfo portion of an RTSP URL.
+
+    Camera passwords frequently contain characters (``$``, ``@``, ``/``, ``#``,
+    ``?``, ``:``) that are reserved in URIs. Left unencoded they break ffmpeg's
+    URL parser. This helper is idempotent — already-encoded input is decoded
+    then re-encoded, so running it twice produces the same result.
+    """
+    parts = urlsplit(url)
+    netloc = parts.netloc or ""
+    if "@" not in netloc:
+        return url
+    userinfo, _, hostport = netloc.rpartition("@")
+    if ":" in userinfo:
+        user, _, pw = userinfo.partition(":")
+        encoded = quote(unquote(user), safe="") + ":" + quote(unquote(pw), safe="")
+    else:
+        encoded = quote(unquote(userinfo), safe="")
+    new_netloc = f"{encoded}@{hostport}"
+    return urlunsplit((parts.scheme, new_netloc, parts.path, parts.query, parts.fragment))
+
+
 def build_ffmpeg_command(config, rtmp_url, stream_key):
     """Construct the ffmpeg command list from configuration values."""
     stream = config["stream"]
@@ -757,9 +787,23 @@ def start_ffmpeg_process(cmd, logger):
 
 
 def relay_ffmpeg_output(process, logger):
-    """Stream ffmpeg stdout/stderr to the logger line by line."""
-    for line in iter(process.stdout.readline, ""):
-        logger.info(f"[ffmpeg] {line.rstrip()}")
+    """Spawn a daemon thread that streams ffmpeg stdout/stderr to the logger.
+
+    The thread is started immediately so ffmpeg's output is captured while the
+    main thread waits for YouTube to report the stream as active. Without this,
+    ffmpeg's stderr fills the pipe buffer (~64 KB) and ffmpeg blocks, hiding
+    any error messages that would explain why the stream never goes active.
+
+    Returns the Thread handle so callers can join it after ffmpeg exits.
+    """
+
+    def _pump():
+        for line in iter(process.stdout.readline, ""):
+            logger.info(f"[ffmpeg] {line.rstrip()}")
+
+    thread = threading.Thread(target=_pump, name="ffmpeg-output", daemon=True)
+    thread.start()
+    return thread
 
 
 # ── PID File Management ─────────────────────────────────────────────────────
@@ -1103,6 +1147,7 @@ def prompt_all_config_values(res, existing=None):
         _get_nested(ex, "stream", "rtspUrl"),
         validator=rtsp_validator,
     )
+    rtsp_url = encode_rtsp_credentials(rtsp_url)
     video_codec = _smart_prompt(
         prompts["videoCodec"],
         _get_nested(ex, "stream", "videoCodec"),
@@ -1455,11 +1500,13 @@ def _stream_until_exit(config, logger, ctx, res=None):
     cmd = build_ffmpeg_command(config, ctx.rtmp_url, ctx.stream_key)
     process = start_ffmpeg_process(cmd, logger)
     _ffmpeg_process = process
+    output_thread = relay_ffmpeg_output(process, logger)
 
     if ctx.stream_id:
         if not wait_for_stream_active(ctx.youtube, ctx.stream_id, logger):
             process.terminate()
             process.wait()
+            output_thread.join(timeout=5)
             _ffmpeg_process = None
             if is_stop_requested(config):
                 return
@@ -1469,9 +1516,9 @@ def _stream_until_exit(config, logger, ctx, res=None):
         time.sleep(15)
 
     ensure_broadcast_live(ctx.youtube, ctx.broadcast_id, config, logger, res)
-    relay_ffmpeg_output(process, logger)
 
     process.wait()
+    output_thread.join(timeout=5)
     _ffmpeg_process = None
     logger.info(f"ffmpeg exited with code {process.returncode}")
 

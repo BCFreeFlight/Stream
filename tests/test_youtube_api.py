@@ -358,18 +358,33 @@ class TestHighLevelOrchestration:
         self, mock_list, mock_trans, mock_logger
     ):
         """Orphaned live broadcasts are transitioned to complete."""
-        def list_by_filter(youtube, status_filter=None):
-            if status_filter == "active":
-                return [
-                    {"id": "orphan-1", "status": {"lifeCycleStatus": "live"}},
-                    {"id": "current", "status": {"lifeCycleStatus": "live"}},
-                ]
-            return []
-
-        mock_list.side_effect = list_by_filter
+        mock_list.return_value = [
+            {"id": "orphan-1", "status": {"lifeCycleStatus": "live"}},
+            {"id": "current", "status": {"lifeCycleStatus": "live"}},
+        ]
         yt = MagicMock()
         stream.cleanup_orphaned_broadcasts(yt, "current", mock_logger)
         mock_trans.assert_called_once_with(yt, "orphan-1", "complete")
+        mock_list.assert_called_once_with(yt)
+
+    @patch("stream._api_transition_broadcast")
+    @patch("stream._api_list_my_broadcasts")
+    def test_cleanup_orphaned_broadcasts_filters_lifecycles_client_side(
+        self, mock_list, mock_trans, mock_logger
+    ):
+        """Only live/ready/testing/created lifecycles are transitioned."""
+        mock_list.return_value = [
+            {"id": "live-one", "status": {"lifeCycleStatus": "live"}},
+            {"id": "ready-one", "status": {"lifeCycleStatus": "ready"}},
+            {"id": "testing-one", "status": {"lifeCycleStatus": "testing"}},
+            {"id": "created-one", "status": {"lifeCycleStatus": "created"}},
+            {"id": "complete-one", "status": {"lifeCycleStatus": "complete"}},
+            {"id": "revoked-one", "status": {"lifeCycleStatus": "revoked"}},
+        ]
+        yt = MagicMock()
+        stream.cleanup_orphaned_broadcasts(yt, "current", mock_logger)
+        transitioned = {call.args[1] for call in mock_trans.call_args_list}
+        assert transitioned == {"live-one", "ready-one", "testing-one", "created-one"}
 
     @patch("stream._api_transition_broadcast")
     @patch("stream._api_list_my_broadcasts")
