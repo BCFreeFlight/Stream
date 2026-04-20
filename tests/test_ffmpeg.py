@@ -7,6 +7,42 @@ from unittest.mock import MagicMock, patch
 import stream
 
 
+# ── encode_rtsp_credentials ─────────────────────────────────────────────────
+
+
+class TestEncodeRtspCredentials:
+    def test_encodes_dollar_sign_in_password(self, stream):
+        url = "rtsp://admin:Cloudbase$$1@10.10.10.6:554/h264Preview_01_main"
+        result = stream.encode_rtsp_credentials(url)
+        assert result == "rtsp://admin:Cloudbase%24%241@10.10.10.6:554/h264Preview_01_main"
+
+    def test_encodes_multiple_reserved_chars_in_password(self, stream):
+        url = "rtsp://user:p$w&x=y@cam.local/stream"
+        result = stream.encode_rtsp_credentials(url)
+        assert result == "rtsp://user:p%24w%26x%3Dy@cam.local/stream"
+
+    def test_is_idempotent_on_already_encoded_input(self, stream):
+        url = "rtsp://admin:Cloudbase%24%241@10.10.10.6:554/h264Preview_01_main"
+        first = stream.encode_rtsp_credentials(url)
+        second = stream.encode_rtsp_credentials(first)
+        assert first == url
+        assert second == url
+
+    def test_returns_url_unchanged_when_no_userinfo(self, stream):
+        url = "rtsp://cam.local:554/stream"
+        assert stream.encode_rtsp_credentials(url) == url
+
+    def test_encodes_userinfo_without_password(self, stream):
+        url = "rtsp://ad$min@cam.local/stream"
+        result = stream.encode_rtsp_credentials(url)
+        assert result == "rtsp://ad%24min@cam.local/stream"
+
+    def test_preserves_path_and_query(self, stream):
+        url = "rtsp://u:p$w@cam.local:554/path/to/stream?param=value"
+        result = stream.encode_rtsp_credentials(url)
+        assert result == "rtsp://u:p%24w@cam.local:554/path/to/stream?param=value"
+
+
 # ── _audio_flags ────────────────────────────────────────────────────────────
 
 
@@ -113,8 +149,48 @@ class TestRelayFfmpegOutput:
         mock_process = MagicMock()
         mock_process.stdout.readline.side_effect = ["line1\n", "line2\n", ""]
 
-        stream.relay_ffmpeg_output(mock_process, mock_logger)
+        thread = stream.relay_ffmpeg_output(mock_process, mock_logger)
+        thread.join(timeout=2)
 
         logged_messages = [call[0][0] for call in mock_logger.info.call_args_list]
         assert "[ffmpeg] line1" in logged_messages
         assert "[ffmpeg] line2" in logged_messages
+
+    def test_relay_ffmpeg_output_returns_daemon_thread(self, stream, mock_logger):
+        """Relay runs in a background daemon thread so it cannot block shutdown."""
+        import threading
+
+        mock_process = MagicMock()
+        mock_process.stdout.readline.side_effect = [""]
+
+        thread = stream.relay_ffmpeg_output(mock_process, mock_logger)
+        thread.join(timeout=2)
+
+        assert isinstance(thread, threading.Thread)
+        assert thread.daemon is True
+
+    def test_relay_ffmpeg_output_does_not_block_caller(self, stream, mock_logger):
+        """Caller should return immediately even if ffmpeg keeps producing output."""
+        import queue
+
+        produced = queue.Queue()
+        produced.put("early-line\n")
+
+        mock_process = MagicMock()
+
+        def readline():
+            try:
+                return produced.get(timeout=5)
+            except queue.Empty:
+                return ""
+
+        mock_process.stdout.readline.side_effect = readline
+
+        thread = stream.relay_ffmpeg_output(mock_process, mock_logger)
+        # If the relay blocked the caller, we'd never reach this assertion.
+        assert thread.is_alive() or thread.ident is not None
+        produced.put("")  # signal EOF so the daemon can exit
+        thread.join(timeout=3)
+
+        logged = [call[0][0] for call in mock_logger.info.call_args_list]
+        assert "[ffmpeg] early-line" in logged

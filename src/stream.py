@@ -76,9 +76,11 @@ import json
 import os
 import signal
 import shutil
+import threading
 import time
 from collections import namedtuple
 from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 # ── Third-Party ──────────────────────────────────────────────────────────────
 
@@ -717,6 +719,28 @@ def ensure_broadcast_live(youtube, broadcast_id, config, logger, res=None):
 # ── ffmpeg ───────────────────────────────────────────────────────────────────
 
 
+def encode_rtsp_credentials(url):
+    """Percent-encode reserved characters in the userinfo portion of an RTSP URL.
+
+    Camera passwords frequently contain characters (``$``, ``@``, ``/``, ``#``,
+    ``?``, ``:``) that are reserved in URIs. Left unencoded they break ffmpeg's
+    URL parser. This helper is idempotent — already-encoded input is decoded
+    then re-encoded, so running it twice produces the same result.
+    """
+    parts = urlsplit(url)
+    netloc = parts.netloc or ""
+    if "@" not in netloc:
+        return url
+    userinfo, _, hostport = netloc.rpartition("@")
+    if ":" in userinfo:
+        user, _, pw = userinfo.partition(":")
+        encoded = quote(unquote(user), safe="") + ":" + quote(unquote(pw), safe="")
+    else:
+        encoded = quote(unquote(userinfo), safe="")
+    new_netloc = f"{encoded}@{hostport}"
+    return urlunsplit((parts.scheme, new_netloc, parts.path, parts.query, parts.fragment))
+
+
 def build_ffmpeg_command(config, rtmp_url, stream_key):
     """Construct the ffmpeg command list from configuration values."""
     stream = config["stream"]
@@ -757,9 +781,23 @@ def start_ffmpeg_process(cmd, logger):
 
 
 def relay_ffmpeg_output(process, logger):
-    """Stream ffmpeg stdout/stderr to the logger line by line."""
-    for line in iter(process.stdout.readline, ""):
-        logger.info(f"[ffmpeg] {line.rstrip()}")
+    """Spawn a daemon thread that streams ffmpeg stdout/stderr to the logger.
+
+    The thread is started immediately so ffmpeg's output is captured while the
+    main thread waits for YouTube to report the stream as active. Without this,
+    ffmpeg's stderr fills the pipe buffer (~64 KB) and ffmpeg blocks, hiding
+    any error messages that would explain why the stream never goes active.
+
+    Returns the Thread handle so callers can join it after ffmpeg exits.
+    """
+
+    def _pump():
+        for line in iter(process.stdout.readline, ""):
+            logger.info(f"[ffmpeg] {line.rstrip()}")
+
+    thread = threading.Thread(target=_pump, name="ffmpeg-output", daemon=True)
+    thread.start()
+    return thread
 
 
 # ── PID File Management ─────────────────────────────────────────────────────
@@ -1103,6 +1141,7 @@ def prompt_all_config_values(res, existing=None):
         _get_nested(ex, "stream", "rtspUrl"),
         validator=rtsp_validator,
     )
+    rtsp_url = encode_rtsp_credentials(rtsp_url)
     video_codec = _smart_prompt(
         prompts["videoCodec"],
         _get_nested(ex, "stream", "videoCodec"),
@@ -1455,11 +1494,13 @@ def _stream_until_exit(config, logger, ctx, res=None):
     cmd = build_ffmpeg_command(config, ctx.rtmp_url, ctx.stream_key)
     process = start_ffmpeg_process(cmd, logger)
     _ffmpeg_process = process
+    output_thread = relay_ffmpeg_output(process, logger)
 
     if ctx.stream_id:
         if not wait_for_stream_active(ctx.youtube, ctx.stream_id, logger):
             process.terminate()
             process.wait()
+            output_thread.join(timeout=5)
             _ffmpeg_process = None
             if is_stop_requested(config):
                 return
@@ -1469,9 +1510,9 @@ def _stream_until_exit(config, logger, ctx, res=None):
         time.sleep(15)
 
     ensure_broadcast_live(ctx.youtube, ctx.broadcast_id, config, logger, res)
-    relay_ffmpeg_output(process, logger)
 
     process.wait()
+    output_thread.join(timeout=5)
     _ffmpeg_process = None
     logger.info(f"ffmpeg exited with code {process.returncode}")
 
