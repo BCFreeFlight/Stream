@@ -116,6 +116,7 @@ broadcastTitle = "My Location: {date}"
 privacy = "public"
 categoryId = "22"
 enableMonitorStream = false
+embeddable = true
 broadcastId = ""
 streamURL = ""
 backupStreamUrl = ""

@@ -18,13 +18,13 @@ class TestLowLevelAPI:
 
     def test_api_insert_broadcast_calls_execute(self, mock_youtube):
         """insert_broadcast chains liveBroadcasts().insert().execute()."""
-        stream._api_insert_broadcast(mock_youtube, "title", "public", False)
+        stream._api_insert_broadcast(mock_youtube, "title", "public", False, True)
         mock_youtube.liveBroadcasts().insert.assert_called_once()
         mock_youtube.liveBroadcasts().insert().execute.assert_called_once()
 
     def test_api_insert_broadcast_body_structure(self, mock_youtube):
         """The body kwarg contains the expected snippet, status, and contentDetails."""
-        stream._api_insert_broadcast(mock_youtube, "My Title", "unlisted", False)
+        stream._api_insert_broadcast(mock_youtube, "My Title", "unlisted", False, True)
         _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
         body = kwargs["body"]
 
@@ -32,6 +32,18 @@ class TestLowLevelAPI:
         assert body["status"]["privacyStatus"] == "unlisted"
         assert body["contentDetails"]["enableAutoStart"] is False
         assert body["contentDetails"]["enableAutoStop"] is False
+
+    def test_api_insert_broadcast_embeddable_true(self, mock_youtube):
+        """embeddable=True is set in the status body."""
+        stream._api_insert_broadcast(mock_youtube, "T", "public", False, True)
+        _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
+        assert kwargs["body"]["status"]["embeddable"] is True
+
+    def test_api_insert_broadcast_embeddable_false(self, mock_youtube):
+        """embeddable=False is set in the status body."""
+        stream._api_insert_broadcast(mock_youtube, "T", "public", False, False)
+        _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
+        assert kwargs["body"]["status"]["embeddable"] is False
 
     # -- _api_insert_stream --------------------------------------------------
 
@@ -168,6 +180,22 @@ class TestHighLevelOrchestration:
         mock_insert.return_value = {"id": "bcast-1"}
         result = stream.create_broadcast(MagicMock(), sample_config, mock_logger)
         assert result == "bcast-1"
+
+    @patch("stream._api_insert_broadcast")
+    def test_create_broadcast_passes_embeddable_true(self, mock_insert, sample_config, mock_logger):
+        """create_broadcast forwards embeddable=True from config to the API call."""
+        sample_config["youtube"]["embeddable"] = True
+        mock_insert.return_value = {"id": "bcast-2"}
+        stream.create_broadcast(MagicMock(), sample_config, mock_logger)
+        assert mock_insert.call_args[0][4] is True
+
+    @patch("stream._api_insert_broadcast")
+    def test_create_broadcast_passes_embeddable_false(self, mock_insert, sample_config, mock_logger):
+        """create_broadcast forwards embeddable=False from config to the API call."""
+        sample_config["youtube"]["embeddable"] = False
+        mock_insert.return_value = {"id": "bcast-3"}
+        stream.create_broadcast(MagicMock(), sample_config, mock_logger)
+        assert mock_insert.call_args[0][4] is False
 
     # -- create_stream_resource ----------------------------------------------
 

@@ -66,6 +66,7 @@ def sample_config():
             "privacy": "public",
             "categoryId": "22",
             "enableMonitorStream": False,
+            "embeddable": True,
             "broadcastId": "bcast-123",
             "streamURL": "rtmp://a.rtmp.youtube.com/live2",
             "backupStreamUrl": "rtmp://b.rtmp.youtube.com/live2?backup=1",
