@@ -130,6 +130,7 @@ def mock_youtube():
     broadcasts.bind.return_value.execute.return_value = {}
     broadcasts.transition.return_value.execute.return_value = {}
     broadcasts.update.return_value.execute.return_value = {}
+    broadcasts.delete.return_value.execute.return_value = {}
     yt.liveBroadcasts.return_value = broadcasts
 
     # liveStreams chains

@@ -438,6 +438,11 @@ def _api_transition_broadcast(youtube, broadcast_id, status):
     )
 
 
+def _api_delete_broadcast(youtube, broadcast_id):
+    """Call liveBroadcasts.delete to remove a broadcast that cannot be completed."""
+    youtube.liveBroadcasts().delete(id=broadcast_id).execute()
+
+
 def _api_get_stream_status(youtube, stream_id):
     """Return the current streamStatus string, or None if unavailable."""
     resp = youtube.liveStreams().list(part="status", id=stream_id).execute()
@@ -661,10 +666,23 @@ def cleanup_orphaned_broadcasts(youtube, current_broadcast_id, logger):
         if lifecycle not in orphaned_lifecycles:
             continue
         try:
-            _api_transition_broadcast(youtube, bid, "complete")
-            logger.info(f"Completed orphaned broadcast: {bid} (was {lifecycle})")
+            _retire_orphaned_broadcast(youtube, bid, lifecycle, logger)
         except Exception as exc:
-            logger.warn(f"Could not complete orphaned broadcast {bid}: {exc}")
+            logger.warn(f"Could not retire orphaned broadcast {bid}: {exc}")
+
+
+def _retire_orphaned_broadcast(youtube, broadcast_id, lifecycle, logger):
+    """Complete or delete an orphaned broadcast depending on its current state.
+
+    YouTube only allows transitioning to 'complete' from 'live' or 'testing'.
+    Broadcasts in 'created' or 'ready' state must be deleted instead.
+    """
+    if lifecycle in ("live", "testing"):
+        _api_transition_broadcast(youtube, broadcast_id, "complete")
+        logger.info(f"Completed orphaned broadcast: {broadcast_id} (was {lifecycle})")
+    else:
+        _api_delete_broadcast(youtube, broadcast_id)
+        logger.info(f"Deleted orphaned broadcast: {broadcast_id} (was {lifecycle})")
 
 
 def _create_fresh_broadcast(youtube, config, logger):
