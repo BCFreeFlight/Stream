@@ -161,6 +161,7 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 | `--recover` | Crash-recovery. If the current time falls inside the daily `cron.start`/`cron.stop` window (and no stream is already running), delegates to `--start`. Otherwise exits cleanly. Registered as an `@reboot` cron entry by `--install`. |
 | `--update` | Backs up current files to a versioned zip in `backup/`, downloads the latest release from GitHub, and replaces `stream.py` and `resources.toml`. |
 | `--roll-back [VERSION]` | Restores `stream.py` and `resources.toml` from a backup. Without a version, lists available backups interactively. |
+| `--set-property KEY VALUE` | Sets a single `config.toml` value by dot-notation key (e.g. `cron.autoUpdate true`). Can be repeated for multiple properties in one invocation. Keys are validated against `CONFIG_DEFAULTS`; unknown keys and section names are rejected. |
 
 ---
 
