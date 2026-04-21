@@ -125,6 +125,8 @@ streamKey = ""
 [cron]
 start = "30 6 1-31 4-10 *"
 stop = "25 18 1-31 4-10 *"
+autoUpdate = false # default to false to avoid breaking changes without user consent
+update = "0 0 * * *" # schedule for checking for updates (e.g. "0 0 * * *" for daily at midnight - default)
 ```
 
 ### .env — secrets only
@@ -281,10 +283,15 @@ The retry loop does not have a maximum retry count. It runs until `--stop` is ca
 - **Start:** `30 6 1-31 4-10 *` (6:30am daily) — opens a terminal window titled "BC Free Flight Stream"
 - **Stop:** `25 18 1-31 4-10 *` (6:25pm daily) — runs directly without a terminal window
 - **Recover:** `@reboot` — runs `--recover` headless at boot so the stream resumes automatically after a power loss or reboot that falls inside the daily window
+- **Update** *(optional)*: `0 0 * * *` (midnight daily, default) — runs `--update` headless; only registered when `cron.autoUpdate = true`
+
+The `autoUpdate` flag defaults to `false` to prevent unattended updates without user consent. When enabled during `--install`, the update cron is registered alongside the other three.
 
 The start cron opens a single terminal window. When the stop cron fires, the stream process exits and the terminal window closes. This prevents terminal window accumulation over time — only one window exists at a time.
 
 `--install` must not create duplicate crontab entries if run more than once.
+
+When `--update` is run on an existing install that lacks the `autoUpdate`/`update` keys, those keys are written to `config.toml` with their defaults (no prompt, no cron registration).
 
 ---
 

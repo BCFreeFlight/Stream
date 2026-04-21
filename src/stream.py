@@ -155,6 +155,8 @@ CONFIG_COMMENTS = {
     "backupStreamUrl": "# Backup RTMP ingest URL — used on odd-numbered retry attempts",
     "streamKey": "# Stream key for the RTMP URL",
     "[cron]": "# Cron schedule for automatic start/stop (crontab expressions)",
+    "autoUpdate": "# Automatically check for and install updates on the update cron schedule",
+    "update": "# Cron schedule for automatic update checks (e.g. daily at midnight)",
 }
 
 
@@ -1037,6 +1039,9 @@ def _build_cron_line(schedule, terminal, action):
     if action == "recover":
         return f"@reboot {python} {script_path} --recover {CRON_MARKER}"
 
+    if action == "update":
+        return f"{schedule} {python} {script_path} --update {CRON_MARKER}"
+
     title = "BC Free Flight Stream"
     if terminal == "gnome-terminal":
         term_cmd = f'{terminal} --title="{title}" -- {python} {script_path} --start'
@@ -1071,6 +1076,10 @@ def register_cron_entries(config, logger=None):
 
     lines = _remove_marker_lines(_read_current_crontab())
     lines.extend([start_line, stop_line, recover_line])
+
+    if config["cron"].get("autoUpdate") and config["cron"].get("update"):
+        update_line = _build_cron_line(config["cron"]["update"], terminal, "update")
+        lines.append(update_line)
 
     new_crontab = "\n".join(lines) + "\n"
     subprocess.run(
@@ -1282,6 +1291,8 @@ def prompt_all_config_values(res, existing=None):
 
     cron_start = ""
     cron_stop = ""
+    auto_update = False
+    cron_update = ""
     if cron_enabled:
         _show_guide(res["install"]["cron_guide"])
         cron_start = _smart_prompt(
@@ -1294,6 +1305,20 @@ def prompt_all_config_values(res, existing=None):
             _get_nested(ex, "cron", "stop"),
             default=defaults["cronStop"],
         )
+        existing_auto_update = _get_nested(ex, "cron", "autoUpdate", default=None)
+        if existing_auto_update is not None:
+            auto_update = existing_auto_update
+        else:
+            auto_update_str = _prompt(
+                prompts["cronAutoUpdate"], default="no", validator=yes_no_validator
+            )
+            auto_update = auto_update_str.lower() == "yes"
+        if auto_update:
+            cron_update = _smart_prompt(
+                prompts["cronUpdate"],
+                _get_nested(ex, "cron", "update"),
+                default=defaults["cronUpdate"],
+            )
 
     config = {
         "google": {"clientId": client_id},
@@ -1326,6 +1351,8 @@ def prompt_all_config_values(res, existing=None):
             "enabled": cron_enabled,
             "start": cron_start,
             "stop": cron_stop,
+            "autoUpdate": auto_update,
+            "update": cron_update,
         },
     }
     return config, client_secret
@@ -1427,6 +1454,8 @@ def _print_install_summary(config, res):
     if config["cron"].get("enabled"):
         print(summary["cron_start"].format(schedule=config["cron"]["start"]))
         print(summary["cron_stop"].format(schedule=config["cron"]["stop"]))
+        if config["cron"].get("autoUpdate"):
+            print(summary["cron_update"].format(schedule=config["cron"]["update"]))
     else:
         print("  Cron:          disabled")
     print(summary["youtube_url"].format(broadcast_id=yt["broadcastId"]))
@@ -1903,8 +1932,35 @@ def _download_release_asset(filename):
     urllib.request.urlretrieve(url, dest)
 
 
+def _apply_auto_update_config_defaults():
+    """Add missing autoUpdate/update cron keys to an existing install without prompting.
+
+    Called by --update so that existing installs receive the new config schema keys
+    (defaulting to autoUpdate=false, update="0 0 * * *") without requiring a
+    full --reinstall.
+    """
+    config_path = SCRIPT_DIR / "config.toml"
+    if not config_path.exists():
+        return
+    try:
+        config = load_config()
+    except Exception:
+        return
+    cron = config.get("cron", {})
+    if "autoUpdate" in cron and "update" in cron:
+        return
+    if "autoUpdate" not in cron:
+        cron["autoUpdate"] = False
+    if "update" not in cron:
+        cron["update"] = "0 0 * * *"
+    config["cron"] = cron
+    save_config(config)
+    print("Auto-update config defaults applied to existing install.")
+
+
 def do_update():
     """Download the latest release from GitHub, backing up current files first."""
+    _apply_auto_update_config_defaults()
     res = load_resources()
     msgs = res.get("update", {})
 

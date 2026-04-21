@@ -87,6 +87,15 @@ class TestBuildCronLine:
         assert "gnome-terminal" not in line
         assert "DISPLAY=:0" not in line
 
+    def test_build_cron_line_update(self):
+        """An update cron line uses the given schedule, invokes --update, and has no terminal wrapper."""
+        line = stream._build_cron_line("0 0 * * *", "gnome-terminal", "update")
+        assert line.startswith("0 0 * * *")
+        assert "--update" in line
+        assert line.endswith(stream.CRON_MARKER)
+        assert "gnome-terminal" not in line
+        assert "DISPLAY=:0" not in line
+
 
 # ── Cron Management Helpers ─────────────────────────────────────────────────
 
@@ -188,6 +197,44 @@ class TestRegisterCronEntries:
 
             captured = capsys.readouterr()
             assert "Crontab entries registered" in captured.out
+
+
+    def test_register_cron_entries_with_auto_update(self, sample_config):
+        """When autoUpdate is true, a --update cron line is included."""
+        sample_config["cron"]["autoUpdate"] = True
+        sample_config["cron"]["update"] = "0 0 * * *"
+
+        with patch("stream._read_current_crontab", return_value=""), \
+             patch("stream.subprocess.run") as mock_run:
+            stream.register_cron_entries(sample_config)
+
+            written = mock_run.call_args.kwargs.get("input") or mock_run.call_args[1].get("input", "")
+            assert "--update" in written
+            assert written.count(stream.CRON_MARKER) == 4
+
+    def test_register_cron_entries_without_auto_update(self, sample_config):
+        """When autoUpdate is false, no --update cron line is included."""
+        sample_config["cron"]["autoUpdate"] = False
+
+        with patch("stream._read_current_crontab", return_value=""), \
+             patch("stream.subprocess.run") as mock_run:
+            stream.register_cron_entries(sample_config)
+
+            written = mock_run.call_args.kwargs.get("input") or mock_run.call_args[1].get("input", "")
+            assert "--update" not in written
+            assert written.count(stream.CRON_MARKER) == 3
+
+    def test_register_cron_entries_auto_update_missing_schedule(self, sample_config):
+        """When autoUpdate is true but update schedule is empty, no update line is added."""
+        sample_config["cron"]["autoUpdate"] = True
+        sample_config["cron"]["update"] = ""
+
+        with patch("stream._read_current_crontab", return_value=""), \
+             patch("stream.subprocess.run") as mock_run:
+            stream.register_cron_entries(sample_config)
+
+            written = mock_run.call_args.kwargs.get("input") or mock_run.call_args[1].get("input", "")
+            assert "--update" not in written
 
 
 class TestRemoveCronEntries:

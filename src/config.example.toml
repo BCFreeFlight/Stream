@@ -64,3 +64,9 @@ streamKey = ""
 enabled = true
 start = "30 6 1-31 4-10 *"
 stop = "25 18 1-31 4-10 *"
+
+# Automatically check for and install updates on the update cron schedule
+autoUpdate = false
+
+# Cron schedule for automatic update checks (e.g. daily at midnight)
+update = "0 0 * * *"
