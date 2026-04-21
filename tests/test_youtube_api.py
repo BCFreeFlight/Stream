@@ -319,13 +319,70 @@ class TestHighLevelOrchestration:
         stream.apply_video_embeddable(MagicMock(), "bid", True, mock_logger)
         mock_logger.warn.assert_called_once()
 
+    # -- find_stream_resource_by_key -----------------------------------------
+
+    @patch("stream._api_list_my_streams")
+    def test_find_stream_resource_by_key_found(self, mock_list, mock_logger):
+        """Returns (stream_id, rtmp_url, backup_url) when a matching key is found."""
+        mock_list.return_value = [
+            {
+                "id": "s1",
+                "cdn": {
+                    "ingestionInfo": {
+                        "streamName": "key1",
+                        "ingestionAddress": "rtmp://primary",
+                        "backupIngestionAddress": "rtmp://backup",
+                    }
+                },
+            }
+        ]
+        result = stream.find_stream_resource_by_key(MagicMock(), "key1", mock_logger)
+        assert result == ("s1", "rtmp://primary", "rtmp://backup")
+
+    @patch("stream._api_list_my_streams")
+    def test_find_stream_resource_by_key_not_found(self, mock_list, mock_logger):
+        """Returns None when no stream matches the key."""
+        mock_list.return_value = [
+            {"id": "s1", "cdn": {"ingestionInfo": {"streamName": "other",
+                                                   "ingestionAddress": "rtmp://x",
+                                                   "backupIngestionAddress": ""}}}
+        ]
+        result = stream.find_stream_resource_by_key(MagicMock(), "key1", mock_logger)
+        assert result is None
+
+    @patch("stream._api_list_my_streams")
+    def test_find_stream_resource_by_key_no_backup_url(self, mock_list, mock_logger):
+        """backup_url defaults to empty string when backupIngestionAddress is absent."""
+        mock_list.return_value = [
+            {
+                "id": "s1",
+                "cdn": {
+                    "ingestionInfo": {
+                        "streamName": "key1",
+                        "ingestionAddress": "rtmp://primary",
+                    }
+                },
+            }
+        ]
+        result = stream.find_stream_resource_by_key(MagicMock(), "key1", mock_logger)
+        assert result == ("s1", "rtmp://primary", "")
+
     # -- find_stream_by_key --------------------------------------------------
 
     @patch("stream._api_list_my_streams")
     def test_find_stream_by_key_found(self, mock_list, mock_logger):
         """Returns the stream ID when a matching streamName is found."""
         mock_list.return_value = [
-            {"id": "s1", "cdn": {"ingestionInfo": {"streamName": "key1"}}}
+            {
+                "id": "s1",
+                "cdn": {
+                    "ingestionInfo": {
+                        "streamName": "key1",
+                        "ingestionAddress": "rtmp://primary",
+                        "backupIngestionAddress": "rtmp://backup",
+                    }
+                },
+            }
         ]
         result = stream.find_stream_by_key(MagicMock(), "key1", mock_logger)
         assert result == "s1"
@@ -334,7 +391,16 @@ class TestHighLevelOrchestration:
     def test_find_stream_by_key_not_found(self, mock_list, mock_logger):
         """Returns None when no stream matches the key."""
         mock_list.return_value = [
-            {"id": "s1", "cdn": {"ingestionInfo": {"streamName": "other"}}}
+            {
+                "id": "s1",
+                "cdn": {
+                    "ingestionInfo": {
+                        "streamName": "other",
+                        "ingestionAddress": "rtmp://x",
+                        "backupIngestionAddress": "",
+                    }
+                },
+            }
         ]
         result = stream.find_stream_by_key(MagicMock(), "key1", mock_logger)
         assert result is None
