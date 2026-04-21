@@ -44,6 +44,9 @@ categoryId = "22"
 # Enable the YouTube monitor stream
 enableMonitorStream = false
 
+# Allow the broadcast to be embedded on external websites
+embeddable = true
+
 # Persistent broadcast ID — created by --install, reused by --start
 broadcastId = ""
 
