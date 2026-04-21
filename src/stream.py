@@ -496,6 +496,15 @@ def _api_update_video_snippet(youtube, video_id, snippet):
     )
 
 
+def _api_update_video_status(youtube, video_id, status):
+    """Call videos.update to replace the video status."""
+    return (
+        youtube.videos()
+        .update(part="status", body={"id": video_id, "status": status})
+        .execute()
+    )
+
+
 def _api_get_video_snippet(youtube, video_id):
     """Call videos.list and return the snippet, or None."""
     resp = youtube.videos().list(part="snippet", id=video_id).execute()
@@ -566,6 +575,21 @@ def apply_broadcast_category(youtube, broadcast_id, category_id, logger):
         logger.info(f"Video category set to {category_id}")
     except HttpError as exc:
         logger.warn(f"Could not set video category: {exc}")
+
+
+def apply_video_embeddable(youtube, broadcast_id, embeddable, logger):
+    """Set the embeddable flag on the broadcast's associated video resource.
+
+    liveBroadcasts.status.embeddable controls the broadcast object, but the
+    underlying video resource has its own separate embeddable flag. Both must
+    be true for embedding to work on all clients (mobile browsers enforce the
+    video-level flag strictly).
+    """
+    try:
+        _api_update_video_status(youtube, broadcast_id, {"embeddable": embeddable})
+        logger.info(f"Video embeddable set to {embeddable}")
+    except HttpError as exc:
+        logger.warn(f"Could not set video embeddable: {exc}")
 
 
 def update_broadcast_title(youtube, broadcast_id, config, logger):
@@ -701,6 +725,9 @@ def _create_fresh_broadcast(youtube, config, logger):
     category_id = config["youtube"].get("categoryId", "")
     if category_id:
         apply_broadcast_category(youtube, new_id, category_id, logger)
+
+    embeddable = config["youtube"].get("embeddable", True)
+    apply_video_embeddable(youtube, new_id, embeddable, logger)
 
     config["youtube"]["broadcastId"] = new_id
     save_config(config)
@@ -1377,6 +1404,11 @@ def _setup_youtube_resources(config, creds, res):
     if yt["broadcastId"] and yt.get("categoryId"):
         apply_broadcast_category(
             youtube, yt["broadcastId"], yt["categoryId"], logger
+        )
+
+    if yt["broadcastId"]:
+        apply_video_embeddable(
+            youtube, yt["broadcastId"], yt.get("embeddable", True), logger
         )
 
     bid = yt["broadcastId"]

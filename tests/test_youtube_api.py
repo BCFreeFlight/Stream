@@ -280,6 +280,45 @@ class TestHighLevelOrchestration:
         stream.apply_broadcast_category(MagicMock(), "bid", "22", mock_logger)
         mock_logger.warn.assert_called_once()
 
+    # -- _api_update_video_status --------------------------------------------
+
+    def test_api_update_video_status_calls_videos_update(self, mock_youtube):
+        """_api_update_video_status calls videos().update() with part=status."""
+        stream._api_update_video_status(mock_youtube, "vid-1", {"embeddable": True})
+        mock_youtube.videos().update.assert_called_once()
+        _, kwargs = mock_youtube.videos().update.call_args
+        assert kwargs["part"] == "status"
+        assert kwargs["body"]["id"] == "vid-1"
+        assert kwargs["body"]["status"] == {"embeddable": True}
+
+    # -- apply_video_embeddable ----------------------------------------------
+
+    @patch("stream._api_update_video_status")
+    def test_apply_video_embeddable_true(self, mock_update, mock_logger):
+        """Sets embeddable=True on the video status."""
+        yt = MagicMock()
+        stream.apply_video_embeddable(yt, "bid", True, mock_logger)
+        mock_update.assert_called_once_with(yt, "bid", {"embeddable": True})
+        mock_logger.info.assert_called_once()
+
+    @patch("stream._api_update_video_status")
+    def test_apply_video_embeddable_false(self, mock_update, mock_logger):
+        """Sets embeddable=False on the video status."""
+        yt = MagicMock()
+        stream.apply_video_embeddable(yt, "bid", False, mock_logger)
+        mock_update.assert_called_once_with(yt, "bid", {"embeddable": False})
+
+    @patch("stream._api_update_video_status")
+    def test_apply_video_embeddable_http_error(self, mock_update, mock_logger):
+        """HttpError is caught and logged as a warning, no exception raised."""
+        from googleapiclient.errors import HttpError
+
+        mock_update.side_effect = HttpError(
+            resp=MagicMock(status=403), content=b"forbidden"
+        )
+        stream.apply_video_embeddable(MagicMock(), "bid", True, mock_logger)
+        mock_logger.warn.assert_called_once()
+
     # -- find_stream_by_key --------------------------------------------------
 
     @patch("stream._api_list_my_streams")
