@@ -75,6 +75,7 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `youtube.privacy` | string | `public` | Broadcast privacy: `public`, `unlisted`, or `private` |
 | `youtube.categoryId` | string | `22` | YouTube category ID (22 = People & Blogs) |
 | `youtube.enableMonitorStream` | boolean | `false` | Enable the YouTube monitor stream |
+| `youtube.embeddable` | boolean | `true` | Allow the broadcast to be embedded on external websites |
 | `youtube.broadcastId` | string | *(auto-created or prompted)* | Persistent YouTube broadcast ID |
 | `youtube.streamURL` | string | *(auto-populated)* | RTMP ingest URL (returned by `liveStreams.insert`) |
 | `youtube.backupStreamUrl` | string | *(auto-populated)* | Backup RTMP ingest URL (used on retry) |
@@ -85,6 +86,7 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `logRetentionDays` | integer | `15` | Days to keep log files |
 | `retryDelaySecs` | integer | `5` | Seconds between retries |
 | `terminal` | string | *(auto-detected)* | Terminal emulator for cron |
+| `cron.enabled` | boolean | `true` | If `false`, cron jobs are not registered during `--install` |
 | `cron.start` | string | `30 6 1-31 4-10 *` | Cron expression for daily start |
 | `cron.stop` | string | `25 18 1-31 4-10 *` | Cron expression for daily stop |
 | `cron.autoUpdate` | boolean | `false` | If `true`, registers an update cron job that runs `--update` on schedule |
@@ -108,7 +110,9 @@ Secrets live in `.env`, created by `--install`. See [`example.env`](src/example.
 python3 stream.py --start
 ```
 
-Resumes streaming to the existing YouTube broadcast. Updates the broadcast title with today's date. If ffmpeg exits unexpectedly, it retries automatically — alternating between the primary and backup RTMP URLs.
+Retires any previously active broadcast and creates a fresh one, then starts streaming. The broadcast title is updated with today's date. If ffmpeg exits unexpectedly, it retries automatically — alternating between the primary and backup RTMP URLs.
+
+The **channel embed URL** (`/embed/live_stream?channel=...`) is stable: it always resolves to whatever broadcast is currently live, regardless of broadcast ID changes.
 
 ### Stop the stream
 
@@ -134,7 +138,7 @@ Checks whether the current time is inside the daily `cron.start`/`cron.stop` win
 python3 stream.py --install
 ```
 
-Re-running `--install` overwrites configuration and creates new YouTube resources if needed.
+Re-running `--install` is fully idempotent. It loads existing configuration and only prompts for values that are empty or missing. Existing credentials, YouTube resources, and cron entries are preserved and not duplicated.
 
 ### Uninstall
 
@@ -220,7 +224,7 @@ Running `--install` again updates entries without creating duplicates.
 
 ## Releases / Updating
 
-Releases are published automatically on every push to `main`. To update:
+Releases are published manually via GitHub Actions (`workflow_dispatch`). To update to the latest published release:
 
 ```bash
 python3 stream.py --update
