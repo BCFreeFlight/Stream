@@ -135,6 +135,14 @@ class TestLowLevelAPI:
         result = stream._api_list_my_broadcasts(mock_youtube)
         assert result == []
 
+    # -- _api_delete_broadcast -----------------------------------------------
+
+    def test_api_delete_broadcast_calls_execute(self, mock_youtube):
+        """delete chains liveBroadcasts().delete().execute()."""
+        stream._api_delete_broadcast(mock_youtube, "bid")
+        mock_youtube.liveBroadcasts().delete.assert_called_once_with(id="bid")
+        mock_youtube.liveBroadcasts().delete().execute.assert_called_once()
+
     # -- _api_get_video_snippet ----------------------------------------------
 
     def test_api_get_video_snippet_found(self, mock_youtube):
@@ -403,29 +411,58 @@ class TestHighLevelOrchestration:
         with pytest.raises(RuntimeError):
             stream.ensure_broadcast_live(MagicMock(), "bid", sample_config, mock_logger)
 
+    # -- _retire_orphaned_broadcast ------------------------------------------
+
+    def test_retire_orphaned_completes_live(self, mock_logger):
+        """A live broadcast is transitioned to complete."""
+        yt = MagicMock()
+        stream._retire_orphaned_broadcast(yt, "bid", "live", mock_logger)
+        yt.liveBroadcasts().transition.assert_called_once()
+        yt.liveBroadcasts().delete.assert_not_called()
+
+    def test_retire_orphaned_completes_testing(self, mock_logger):
+        """A testing broadcast is transitioned to complete."""
+        yt = MagicMock()
+        stream._retire_orphaned_broadcast(yt, "bid", "testing", mock_logger)
+        yt.liveBroadcasts().transition.assert_called_once()
+        yt.liveBroadcasts().delete.assert_not_called()
+
+    def test_retire_orphaned_deletes_created(self, mock_logger):
+        """A created broadcast is deleted (cannot be completed directly)."""
+        yt = MagicMock()
+        stream._retire_orphaned_broadcast(yt, "bid", "created", mock_logger)
+        yt.liveBroadcasts().delete.assert_called_once_with(id="bid")
+        yt.liveBroadcasts().transition.assert_not_called()
+
+    def test_retire_orphaned_deletes_ready(self, mock_logger):
+        """A ready broadcast is deleted (cannot be completed directly)."""
+        yt = MagicMock()
+        stream._retire_orphaned_broadcast(yt, "bid", "ready", mock_logger)
+        yt.liveBroadcasts().delete.assert_called_once_with(id="bid")
+        yt.liveBroadcasts().transition.assert_not_called()
+
     # -- cleanup_orphaned_broadcasts -----------------------------------------
 
-    @patch("stream._api_transition_broadcast")
+    @patch("stream._retire_orphaned_broadcast")
     @patch("stream._api_list_my_broadcasts")
-    def test_cleanup_orphaned_broadcasts_completes_orphans(
-        self, mock_list, mock_trans, mock_logger
+    def test_cleanup_orphaned_broadcasts_retires_orphans(
+        self, mock_list, mock_retire, mock_logger
     ):
-        """Orphaned live broadcasts are transitioned to complete."""
+        """Orphaned broadcasts are passed to _retire_orphaned_broadcast."""
         mock_list.return_value = [
             {"id": "orphan-1", "status": {"lifeCycleStatus": "live"}},
             {"id": "current", "status": {"lifeCycleStatus": "live"}},
         ]
         yt = MagicMock()
         stream.cleanup_orphaned_broadcasts(yt, "current", mock_logger)
-        mock_trans.assert_called_once_with(yt, "orphan-1", "complete")
-        mock_list.assert_called_once_with(yt)
+        mock_retire.assert_called_once_with(yt, "orphan-1", "live", mock_logger)
 
-    @patch("stream._api_transition_broadcast")
+    @patch("stream._retire_orphaned_broadcast")
     @patch("stream._api_list_my_broadcasts")
     def test_cleanup_orphaned_broadcasts_filters_lifecycles_client_side(
-        self, mock_list, mock_trans, mock_logger
+        self, mock_list, mock_retire, mock_logger
     ):
-        """Only live/ready/testing/created lifecycles are transitioned."""
+        """Only live/ready/testing/created lifecycles are acted on; complete/revoked are skipped."""
         mock_list.return_value = [
             {"id": "live-one", "status": {"lifeCycleStatus": "live"}},
             {"id": "ready-one", "status": {"lifeCycleStatus": "ready"}},
@@ -434,32 +471,31 @@ class TestHighLevelOrchestration:
             {"id": "complete-one", "status": {"lifeCycleStatus": "complete"}},
             {"id": "revoked-one", "status": {"lifeCycleStatus": "revoked"}},
         ]
-        yt = MagicMock()
-        stream.cleanup_orphaned_broadcasts(yt, "current", mock_logger)
-        transitioned = {call.args[1] for call in mock_trans.call_args_list}
-        assert transitioned == {"live-one", "ready-one", "testing-one", "created-one"}
+        stream.cleanup_orphaned_broadcasts(MagicMock(), "current", mock_logger)
+        retired = {call.args[1] for call in mock_retire.call_args_list}
+        assert retired == {"live-one", "ready-one", "testing-one", "created-one"}
 
-    @patch("stream._api_transition_broadcast")
+    @patch("stream._retire_orphaned_broadcast")
     @patch("stream._api_list_my_broadcasts")
     def test_cleanup_orphaned_broadcasts_skips_current(
-        self, mock_list, mock_trans, mock_logger
+        self, mock_list, mock_retire, mock_logger
     ):
-        """The current broadcast is never completed."""
+        """The current broadcast is never retired."""
         mock_list.return_value = [
             {"id": "current", "status": {"lifeCycleStatus": "live"}},
         ]
         stream.cleanup_orphaned_broadcasts(MagicMock(), "current", mock_logger)
-        mock_trans.assert_not_called()
+        mock_retire.assert_not_called()
 
-    @patch("stream._api_transition_broadcast")
+    @patch("stream._retire_orphaned_broadcast")
     @patch("stream._api_list_my_broadcasts")
     def test_cleanup_orphaned_broadcasts_no_orphans(
-        self, mock_list, mock_trans, mock_logger
+        self, mock_list, mock_retire, mock_logger
     ):
-        """No transitions when there are no orphaned broadcasts."""
+        """No action when there are no orphaned broadcasts."""
         mock_list.return_value = []
         stream.cleanup_orphaned_broadcasts(MagicMock(), "current", mock_logger)
-        mock_trans.assert_not_called()
+        mock_retire.assert_not_called()
 
     @patch("stream._api_list_my_broadcasts")
     def test_cleanup_orphaned_broadcasts_handles_api_error(
@@ -470,16 +506,16 @@ class TestHighLevelOrchestration:
         stream.cleanup_orphaned_broadcasts(MagicMock(), "current", mock_logger)
         mock_logger.warn.assert_called()
 
-    @patch("stream._api_transition_broadcast")
+    @patch("stream._retire_orphaned_broadcast")
     @patch("stream._api_list_my_broadcasts")
-    def test_cleanup_orphaned_broadcasts_handles_transition_error(
-        self, mock_list, mock_trans, mock_logger
+    def test_cleanup_orphaned_broadcasts_handles_retire_error(
+        self, mock_list, mock_retire, mock_logger
     ):
-        """Transition errors for individual orphans are logged, not raised."""
+        """Retire errors for individual orphans are logged, not raised."""
         mock_list.return_value = [
             {"id": "orphan-1", "status": {"lifeCycleStatus": "live"}},
         ]
-        mock_trans.side_effect = Exception("transition failed")
+        mock_retire.side_effect = Exception("retire failed")
         stream.cleanup_orphaned_broadcasts(MagicMock(), "current", mock_logger)
         mock_logger.warn.assert_called()
 
