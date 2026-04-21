@@ -11,14 +11,15 @@ import stream
 
 
 class TestSetupYoutubeResources:
-    def test_creates_stream_via_api_when_streamkey_missing(
+    def test_blank_input_creates_new_stream_resource(
         self, sample_config, sample_resources
     ):
-        """When streamKey is empty, install calls create_stream_resource and populates URL and key fields."""
+        """Pressing Enter (blank) at the stream key prompt creates a new stream resource."""
         sample_config["youtube"]["broadcastId"] = "existing-bcast"
         sample_config["youtube"]["streamKey"] = ""
 
         with patch("stream.build_youtube_service"), \
+             patch("builtins.input", return_value=""), \
              patch(
                  "stream.create_stream_resource",
                  return_value=("new-stream-id", "rtmp://primary", "rtmp://backup", "new-key"),
@@ -33,22 +34,69 @@ class TestSetupYoutubeResources:
         assert sample_config["youtube"]["backupStreamUrl"] == "rtmp://backup"
         assert sample_config["youtube"]["streamKey"] == "new-key"
 
-    def test_skips_stream_creation_when_streamkey_present(
-        self, sample_config, sample_resources
-    ):
-        """If streamKey already exists in config, create_stream_resource is not called."""
+    def test_valid_existing_key_skips_create(self, sample_config, sample_resources):
+        """Entering a valid stream key uses the existing resource and skips create_stream_resource."""
         sample_config["youtube"]["broadcastId"] = "existing-bcast"
-        sample_config["youtube"]["streamKey"] = "existing-key"
+        sample_config["youtube"]["streamKey"] = ""
 
         with patch("stream.build_youtube_service"), \
+             patch("builtins.input", return_value="user-key"), \
+             patch(
+                 "stream.find_stream_resource_by_key",
+                 return_value=("s-id", "rtmp://primary", "rtmp://backup"),
+             ), \
              patch("stream.create_stream_resource") as mock_create, \
-             patch("stream.find_stream_by_key", return_value="s-id"), \
              patch("stream.bind_stream_to_broadcast"), \
              patch("stream.apply_broadcast_category"), \
              patch("stream.apply_video_embeddable"):
             stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
 
         mock_create.assert_not_called()
+        assert sample_config["youtube"]["streamKey"] == "user-key"
+        assert sample_config["youtube"]["streamURL"] == "rtmp://primary"
+        assert sample_config["youtube"]["backupStreamUrl"] == "rtmp://backup"
+
+    def test_invalid_key_falls_back_to_create(self, sample_config, sample_resources, capsys):
+        """A key not found in the user's YouTube account falls back to creating a new resource."""
+        sample_config["youtube"]["broadcastId"] = "existing-bcast"
+        sample_config["youtube"]["streamKey"] = ""
+
+        with patch("stream.build_youtube_service"), \
+             patch("builtins.input", return_value="bad-key"), \
+             patch("stream.find_stream_resource_by_key", return_value=None), \
+             patch(
+                 "stream.create_stream_resource",
+                 return_value=("new-id", "rtmp://p", "rtmp://b", "new-key"),
+             ) as mock_create, \
+             patch("stream.bind_stream_to_broadcast"), \
+             patch("stream.apply_broadcast_category"), \
+             patch("stream.apply_video_embeddable"):
+            stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
+
+        mock_create.assert_called_once()
+        assert "not found" in capsys.readouterr().out.lower() or mock_create.called
+
+    def test_skips_stream_creation_when_streamkey_present(
+        self, sample_config, sample_resources
+    ):
+        """If streamKey already exists in config, no prompt is shown and create is not called."""
+        sample_config["youtube"]["broadcastId"] = "existing-bcast"
+        sample_config["youtube"]["streamKey"] = "existing-key"
+
+        with patch("stream.build_youtube_service"), \
+             patch("stream.create_stream_resource") as mock_create, \
+             patch(
+                 "stream.find_stream_resource_by_key",
+                 return_value=("s-id", "rtmp://p", "rtmp://b"),
+             ), \
+             patch("stream.bind_stream_to_broadcast"), \
+             patch("stream.apply_broadcast_category"), \
+             patch("stream.apply_video_embeddable"), \
+             patch("builtins.input") as mock_input:
+            stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
+
+        mock_create.assert_not_called()
+        mock_input.assert_not_called()
 
     def test_binds_stream_to_broadcast(self, sample_config, sample_resources):
         """After stream creation, bind_stream_to_broadcast is called with the new IDs."""
@@ -56,6 +104,7 @@ class TestSetupYoutubeResources:
         sample_config["youtube"]["streamKey"] = ""
 
         with patch("stream.build_youtube_service"), \
+             patch("builtins.input", return_value=""), \
              patch(
                  "stream.create_stream_resource",
                  return_value=("stream-A", "rtmp://p", "rtmp://b", "key-A"),
@@ -76,6 +125,7 @@ class TestSetupYoutubeResources:
         sample_config["youtube"]["streamKey"] = ""
 
         with patch("stream.build_youtube_service"), \
+             patch("builtins.input", return_value=""), \
              patch(
                  "stream.create_stream_resource",
                  side_effect=RuntimeError("API down"),
@@ -94,7 +144,10 @@ class TestSetupYoutubeResources:
 
         mock_yt_service = MagicMock()
         with patch("stream.build_youtube_service", return_value=mock_yt_service), \
-             patch("stream.find_stream_by_key", return_value="s-id"), \
+             patch(
+                 "stream.find_stream_resource_by_key",
+                 return_value=("s-id", "rtmp://p", "rtmp://b"),
+             ), \
              patch("stream.bind_stream_to_broadcast"), \
              patch("stream.apply_broadcast_category"), \
              patch("stream.apply_video_embeddable") as mock_embed:

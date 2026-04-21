@@ -742,16 +742,28 @@ def update_broadcast_title(youtube, broadcast_id, config, logger):
         logger.warn(f"Could not update broadcast title: {exc}")
 
 
-def find_stream_by_key(youtube, stream_key, logger):
-    """Search the user's live streams for one whose streamName matches the key."""
+def find_stream_resource_by_key(youtube, stream_key, logger):
+    """Search the user's live streams by key.
+
+    Returns (stream_id, rtmp_url, backup_url) when found, or None when not found.
+    """
     logger.debug("Searching for stream resource matching configured key")
     for item in _api_list_my_streams(youtube):
-        if item["cdn"]["ingestionInfo"]["streamName"] == stream_key:
-            stream_id = item["id"]
-            logger.debug(f"Found matching stream resource: {stream_id}")
-            return stream_id
+        info = item["cdn"]["ingestionInfo"]
+        if info["streamName"] == stream_key:
+            logger.debug(f"Found matching stream resource: {item['id']}")
+            return item["id"], info["ingestionAddress"], info.get("backupIngestionAddress", "")
     logger.warn("No matching stream resource found")
     return None
+
+
+def find_stream_by_key(youtube, stream_key, logger):
+    """Search the user's live streams for one whose streamName matches the key.
+
+    Returns the stream_id, or None if not found.
+    """
+    result = find_stream_resource_by_key(youtube, stream_key, logger)
+    return result[0] if result else None
 
 
 def wait_for_stream_active(youtube, stream_id, logger):
@@ -1591,15 +1603,36 @@ def _setup_youtube_resources(config, creds, res):
     if not yt.get("broadcastId"):
         yt["broadcastId"] = create_broadcast(youtube, config, logger)
 
+    prompts = res["install"]["prompts"]
+
     if not yt.get("streamKey"):
-        stream_id, rtmp_url, backup_url, stream_key = create_stream_resource(
-            youtube, logger
-        )
-        yt["streamURL"] = rtmp_url
-        yt["backupStreamUrl"] = backup_url
-        yt["streamKey"] = stream_key
+        _show_guide(res["install"]["stream_key_guide"])
+        user_key = _prompt(prompts["streamKey"], default="")
+        if user_key:
+            result = find_stream_resource_by_key(youtube, user_key, logger)
+            if result:
+                stream_id, rtmp_url, backup_url = result
+                yt["streamURL"] = rtmp_url
+                yt["backupStreamUrl"] = backup_url
+                yt["streamKey"] = user_key
+            else:
+                print(msgs["stream_key_not_found"])
+                stream_id, rtmp_url, backup_url, stream_key = create_stream_resource(
+                    youtube, logger
+                )
+                yt["streamURL"] = rtmp_url
+                yt["backupStreamUrl"] = backup_url
+                yt["streamKey"] = stream_key
+        else:
+            stream_id, rtmp_url, backup_url, stream_key = create_stream_resource(
+                youtube, logger
+            )
+            yt["streamURL"] = rtmp_url
+            yt["backupStreamUrl"] = backup_url
+            yt["streamKey"] = stream_key
     else:
-        stream_id = find_stream_by_key(youtube, yt["streamKey"], logger)
+        result = find_stream_resource_by_key(youtube, yt["streamKey"], logger)
+        stream_id = result[0] if result else None
 
     bind_stream_to_broadcast(
         youtube, yt["broadcastId"], stream_id, logger

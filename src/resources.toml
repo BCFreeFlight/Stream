@@ -34,6 +34,19 @@ broadcast_title_guide = [
     "    Live Cam                   =>  Live Cam",
     "",
 ]
+stream_key_guide = [
+    "",
+    "  You can reuse an existing YouTube stream resource instead of creating a new one.",
+    "  To find your stream key:",
+    "",
+    "  1. Go to https://studio.youtube.com/",
+    "  2. Click 'Go Live' in the top right",
+    "  3. Select 'Stream' tab, then 'Manage' (top right)",
+    "  4. Copy the stream key from the stream you want to reuse",
+    "",
+    "  Leave blank to automatically create a new stream resource.",
+    "",
+]
 cron_guide = [
     "",
     "  Cron jobs will automatically start and stop your stream on a schedule.",
@@ -66,6 +79,7 @@ broadcastTitle = "Broadcast title template"
 privacy = "Privacy (public/unlisted/private)"
 categoryId = "YouTube category ID"
 broadcastId = "Existing broadcast ID (leave empty to create new)"
+streamKey = "Existing YouTube stream key (leave blank to generate a new one)"
 cronSetup = "Set up automatic cron jobs? (yes/no)"
 cronStart = "Cron start expression"
 cronStop = "Cron stop expression"
@@ -108,6 +122,7 @@ auto_update_disabled = "Auto-update cron skipped"
 auto_update_migrated = "Auto-update config defaults applied to existing install"
 broadcast_id_label = "\n  Broadcast ID:  {broadcast_id}"
 stream_url_label = "  Stream URL:    https://youtube.com/live/{broadcast_id}"
+stream_key_not_found = "Stream key not found in your YouTube account — generating a new stream resource instead"
 
 [install.summary]
 header = "\n=== Setup Complete ==="
