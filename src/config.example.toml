@@ -50,9 +50,6 @@ embeddable = true
 # Persistent broadcast ID — created by --install, reused by --start
 broadcastId = ""
 
-# YouTube stream resource ID
-streamId = ""
-
 # Primary RTMP ingest URL
 streamURL = ""
 

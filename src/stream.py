@@ -150,7 +150,7 @@ CONFIG_COMMENTS = {
     "enableMonitorStream": "# Enable the YouTube monitor stream",
     "embeddable": "# Allow the broadcast to be embedded on external websites",
     "broadcastId": "# Persistent broadcast ID — created by --install, reused by --start",
-    "streamId": "# YouTube stream resource ID",
+
     "streamURL": "# Primary RTMP ingest URL",
     "backupStreamUrl": "# Backup RTMP ingest URL — used on odd-numbered retry attempts",
     "streamKey": "# Stream key for the RTMP URL",
@@ -675,7 +675,8 @@ def _create_fresh_broadcast(youtube, config, logger):
     """
     new_id = create_broadcast(youtube, config, logger)
 
-    stream_id = config["youtube"].get("streamId", "")
+    stream_key = config["youtube"].get("streamKey", "")
+    stream_id = find_stream_by_key(youtube, stream_key, logger) if stream_key else None
     if stream_id:
         bind_stream_to_broadcast(youtube, new_id, stream_id, logger)
 
@@ -1266,7 +1267,6 @@ def prompt_all_config_values(res, existing=None):
             ),
             "embeddable": _get_nested(ex, "youtube", "embeddable", default=True),
             "broadcastId": broadcast_id,
-            "streamId": _get_nested(ex, "youtube", "streamId"),
             "streamURL": _get_nested(ex, "youtube", "streamURL"),
             "backupStreamUrl": _get_nested(ex, "youtube", "backupStreamUrl"),
             "streamKey": _get_nested(ex, "youtube", "streamKey"),
@@ -1342,17 +1342,18 @@ def _setup_youtube_resources(config, creds, res):
     if not yt.get("broadcastId"):
         yt["broadcastId"] = create_broadcast(youtube, config, logger)
 
-    if not yt.get("streamId"):
+    if not yt.get("streamKey"):
         stream_id, rtmp_url, backup_url, stream_key = create_stream_resource(
             youtube, logger
         )
-        yt["streamId"] = stream_id
         yt["streamURL"] = rtmp_url
         yt["backupStreamUrl"] = backup_url
         yt["streamKey"] = stream_key
+    else:
+        stream_id = find_stream_by_key(youtube, yt["streamKey"], logger)
 
     bind_stream_to_broadcast(
-        youtube, yt["broadcastId"], yt["streamId"], logger
+        youtube, yt["broadcastId"], stream_id, logger
     )
 
     if yt["broadcastId"] and yt.get("categoryId"):
@@ -1522,9 +1523,7 @@ def _connect_to_broadcast(config, logger, attempt_number=0):
     rtmp_url = select_rtmp_url(config, attempt_number)
     stream_key = yt["streamKey"]
 
-    stream_id = yt.get("streamId", "")
-    if not stream_id:
-        stream_id = find_stream_by_key(youtube, stream_key, logger) or ""
+    stream_id = find_stream_by_key(youtube, stream_key, logger) or ""
 
     return BroadcastContext(youtube, broadcast_id, stream_id, rtmp_url, stream_key)
 

@@ -292,6 +292,31 @@ class TestHighLevelOrchestration:
         result = stream.find_stream_by_key(MagicMock(), "key1", mock_logger)
         assert result is None
 
+    # -- stream ID resolution in _connect_to_broadcast ----------------------
+
+    @patch("stream.get_valid_credentials")
+    @patch("stream.build_youtube_service")
+    @patch("stream.find_stream_by_key")
+    def test_connect_to_broadcast_resolves_stream_id_from_key(
+        self, mock_find, mock_build_yt, mock_creds, mock_logger, sample_config
+    ):
+        """_connect_to_broadcast uses find_stream_by_key to resolve the stream ID."""
+        mock_find.return_value = "s-resolved"
+        ctx = stream._connect_to_broadcast(sample_config, mock_logger)
+        mock_find.assert_called_once_with(mock_build_yt.return_value, "xxxx-yyyy-zzzz", mock_logger)
+        assert ctx.stream_id == "s-resolved"
+
+    @patch("stream.get_valid_credentials")
+    @patch("stream.build_youtube_service")
+    @patch("stream.find_stream_by_key")
+    def test_connect_to_broadcast_empty_stream_id_when_key_not_found(
+        self, mock_find, mock_build_yt, mock_creds, mock_logger, sample_config
+    ):
+        """stream_id is empty string when find_stream_by_key returns None."""
+        mock_find.return_value = None
+        ctx = stream._connect_to_broadcast(sample_config, mock_logger)
+        assert ctx.stream_id == ""
+
     # -- wait_for_stream_active ----------------------------------------------
 
     @patch("time.sleep")

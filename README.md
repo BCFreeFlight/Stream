@@ -42,7 +42,7 @@ This downloads the latest release and launches the interactive setup wizard. Any
    - Install `ffmpeg` if not already present
    - Install required Python packages
    - Open a browser for Google OAuth 2.0 authorization
-   - Create a YouTube broadcast via `liveBroadcasts.insert` and a live-stream resource via `liveStreams.insert`; the resulting `streamId`, `streamURL`, `backupStreamUrl`, and `streamKey` are written to `config.toml` automatically — you do **not** need to copy a stream key from YouTube Studio
+   - Create a YouTube broadcast via `liveBroadcasts.insert` and a live-stream resource via `liveStreams.insert`; the resulting `streamURL`, `backupStreamUrl`, and `streamKey` are written to `config.toml` automatically — you do **not** need to copy a stream key from YouTube Studio
    - Write `config.toml` and `.env` beside the script
    - Detect your terminal emulator and register cron jobs (start, stop, `@reboot` recover)
    - Print the stable YouTube URL for your stream
@@ -76,7 +76,6 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `youtube.categoryId` | string | `22` | YouTube category ID (22 = People & Blogs) |
 | `youtube.enableMonitorStream` | boolean | `false` | Enable the YouTube monitor stream |
 | `youtube.broadcastId` | string | *(auto-created or prompted)* | Persistent YouTube broadcast ID |
-| `youtube.streamId` | string | *(auto-populated)* | YouTube stream resource ID (created by `liveStreams.insert` during install) |
 | `youtube.streamURL` | string | *(auto-populated)* | RTMP ingest URL (returned by `liveStreams.insert`) |
 | `youtube.backupStreamUrl` | string | *(auto-populated)* | Backup RTMP ingest URL (used on retry) |
 | `youtube.streamKey` | string | *(auto-populated)* | Stream key for the RTMP URL (returned by `liveStreams.insert`) |
