@@ -159,8 +159,8 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 | `--start` | Retires any active broadcast, creates a fresh one, and starts streaming. Runs in the foreground, blocking the terminal. |
 | `--stop` | Writes the stop sentinel, signals the running process, waits for graceful shutdown, and transitions the broadcast to `complete` so it is archived as a VOD. |
 | `--recover` | Crash-recovery. If the current time falls inside the daily `cron.start`/`cron.stop` window (and no stream is already running), delegates to `--start`. Otherwise exits cleanly. Registered as an `@reboot` cron entry by `--install`. |
-| `--update` | Backs up current files to a versioned zip in `backup/`, downloads the latest release from GitHub, and replaces `stream.py` and `resources.toml`. |
-| `--roll-back [VERSION]` | Restores `stream.py` and `resources.toml` from a backup. Without a version, lists available backups interactively. |
+| `--update` | Backs up `stream.py`, `resources.toml`, and `config.toml` to a versioned zip in `backup/`, downloads the latest release from GitHub, and replaces `stream.py` and `resources.toml`. |
+| `--roll-back [VERSION]` | Restores `stream.py`, `resources.toml`, and `config.toml` from a backup. Without a version, lists available backups interactively. |
 | `--set-property KEY VALUE` | Sets a single `config.toml` value by dot-notation key (e.g. `cron.autoUpdate true`). Can be repeated for multiple properties in one invocation. Keys are validated against `CONFIG_DEFAULTS`; unknown keys and section names are rejected. |
 
 ---
