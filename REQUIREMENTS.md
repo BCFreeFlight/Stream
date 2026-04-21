@@ -29,14 +29,13 @@ All Python packages are self-installed by `stream.py` on first run. No `requirem
 
 ## Configuration Keys (new in this release)
 
-Two new keys were added to the `[cron]` section of `config.toml`:
-
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `cron.autoUpdate` | boolean | `false` | When `true`, a cron job runs `--update` on the configured schedule |
 | `cron.update` | string | `0 0 * * *` | Cron expression for automatic update checks |
+| `logLevel` | string | `"info"` | Log verbosity: `debug`, `info`, `warning`, or `error`. Can be overridden per-run with `--log-level`. |
 
-Existing installs receive these keys automatically (with defaults) the first time `--update` is run after upgrading.
+Existing installs receive these keys automatically (with defaults) the first time `--start` or `--update` is run after upgrading.
 
 ## Runtime Files
 

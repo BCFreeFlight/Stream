@@ -13,6 +13,9 @@ logDir = "./logs"
 # Delete log files older than this many days
 logRetentionDays = 15
 
+# Log verbosity: "debug", "info", "warning", or "error"
+logLevel = "info"
+
 # Seconds to wait between retry attempts when ffmpeg exits
 retryDelaySecs = 5
 

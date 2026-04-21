@@ -195,6 +195,23 @@ Enter number to restore (or 'q' to cancel):
 
 Backups are created automatically by `--update` and stored in the `backup/` directory beside the script.
 
+### Override log verbosity for a single run
+
+```bash
+python3 stream.py --start --log-level debug
+python3 stream.py --start --log-level warning
+```
+
+Overrides the `logLevel` config value for the current run only — `config.toml` is not modified. Valid values are `debug`, `info`, `warning`, and `error` (case-insensitive). An invalid value exits with an error message.
+
+At `info` (the default), ffmpeg progress lines are suppressed and only milestones are shown. At `debug`, all ffmpeg output, polling status, and internal transitions are visible. ffmpeg lines containing `WARNING` are always promoted to `warning` level regardless of their source.
+
+To make a log level change permanent, use `--set-property`:
+
+```bash
+python3 stream.py --set-property logLevel debug
+```
+
 ### Set a config property
 
 ```bash

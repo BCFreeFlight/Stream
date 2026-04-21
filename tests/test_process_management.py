@@ -135,7 +135,7 @@ class TestKillExistingProcess:
         stream.kill_existing_process(sample_config, mock_logger)
 
         assert not pid_path.exists()
-        logged_messages = " ".join(call[0][0] for call in mock_logger.info.call_args_list)
+        logged_messages = " ".join(call[0][0] for call in mock_logger.debug.call_args_list)
         assert "stale" in logged_messages.lower()
 
     @patch("stream.time.sleep")
