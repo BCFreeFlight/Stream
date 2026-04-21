@@ -117,7 +117,6 @@ privacy = "public"
 categoryId = "22"
 enableMonitorStream = false
 broadcastId = ""
-streamId = ""
 streamURL = ""
 backupStreamUrl = ""
 streamKey = ""
@@ -210,7 +209,7 @@ The stream resource (RTMP URL and stream key) is created **once** during `--inst
 1. `liveBroadcasts.insert` — create broadcast (with `enableAutoStop: false` to prevent auto-completion)
 2. `liveStreams.insert` — create stream resource
 3. `liveBroadcasts.bind` — bind stream to broadcast
-4. Save `broadcastId`, `streamId`, `streamURL`, `backupStreamUrl`, `streamKey` to `config.toml`
+4. Save `broadcastId`, `streamURL`, `backupStreamUrl`, `streamKey` to `config.toml`; `streamId` is resolved from the key at runtime and never persisted
 5. Apply `categoryId` to the broadcast's associated video
 
 ### During `--start`:

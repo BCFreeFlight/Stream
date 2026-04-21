@@ -11,12 +11,12 @@ import stream
 
 
 class TestSetupYoutubeResources:
-    def test_creates_stream_via_api_when_streamid_missing(
+    def test_creates_stream_via_api_when_streamkey_missing(
         self, sample_config, sample_resources
     ):
-        """When streamId is empty, install calls create_stream_resource and populates all four fields."""
+        """When streamKey is empty, install calls create_stream_resource and populates URL and key fields."""
         sample_config["youtube"]["broadcastId"] = "existing-bcast"
-        sample_config["youtube"]["streamId"] = ""
+        sample_config["youtube"]["streamKey"] = ""
 
         with patch("stream.build_youtube_service"), \
              patch(
@@ -24,37 +24,34 @@ class TestSetupYoutubeResources:
                  return_value=("new-stream-id", "rtmp://primary", "rtmp://backup", "new-key"),
              ) as mock_create, \
              patch("stream.bind_stream_to_broadcast"), \
-             patch("stream.apply_broadcast_category"), \
-             patch("stream.find_stream_by_key") as mock_find:
+             patch("stream.apply_broadcast_category"):
             stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
 
         mock_create.assert_called_once()
-        mock_find.assert_not_called()
-        assert sample_config["youtube"]["streamId"] == "new-stream-id"
         assert sample_config["youtube"]["streamURL"] == "rtmp://primary"
         assert sample_config["youtube"]["backupStreamUrl"] == "rtmp://backup"
         assert sample_config["youtube"]["streamKey"] == "new-key"
 
-    def test_skips_stream_creation_when_streamid_present(
+    def test_skips_stream_creation_when_streamkey_present(
         self, sample_config, sample_resources
     ):
-        """If streamId already exists in config, the API is not re-invoked for a fresh stream."""
+        """If streamKey already exists in config, create_stream_resource is not called."""
         sample_config["youtube"]["broadcastId"] = "existing-bcast"
-        sample_config["youtube"]["streamId"] = "already-have-id"
+        sample_config["youtube"]["streamKey"] = "existing-key"
 
         with patch("stream.build_youtube_service"), \
              patch("stream.create_stream_resource") as mock_create, \
+             patch("stream.find_stream_by_key", return_value="s-id"), \
              patch("stream.bind_stream_to_broadcast"), \
              patch("stream.apply_broadcast_category"):
             stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
 
         mock_create.assert_not_called()
-        assert sample_config["youtube"]["streamId"] == "already-have-id"
 
     def test_binds_stream_to_broadcast(self, sample_config, sample_resources):
-        """After stream creation, bind_stream_to_broadcast is called with the resulting IDs."""
+        """After stream creation, bind_stream_to_broadcast is called with the new IDs."""
         sample_config["youtube"]["broadcastId"] = "bcast-A"
-        sample_config["youtube"]["streamId"] = ""
+        sample_config["youtube"]["streamKey"] = ""
 
         with patch("stream.build_youtube_service"), \
              patch(
@@ -73,7 +70,7 @@ class TestSetupYoutubeResources:
     def test_api_failure_propagates(self, sample_config, sample_resources):
         """If create_stream_resource raises, the error is not silently swallowed."""
         sample_config["youtube"]["broadcastId"] = "bcast"
-        sample_config["youtube"]["streamId"] = ""
+        sample_config["youtube"]["streamKey"] = ""
 
         with patch("stream.build_youtube_service"), \
              patch(
@@ -84,9 +81,6 @@ class TestSetupYoutubeResources:
              patch("stream.apply_broadcast_category"):
             with pytest.raises(RuntimeError, match="API down"):
                 stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
-
-        # streamId must stay empty rather than being written as ""
-        assert sample_config["youtube"]["streamId"] == ""
 
 
 # ── prompt_all_config_values ────────────────────────────────────────────────

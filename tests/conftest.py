@@ -67,7 +67,6 @@ def sample_config():
             "categoryId": "22",
             "enableMonitorStream": False,
             "broadcastId": "bcast-123",
-            "streamId": "stream-456",
             "streamURL": "rtmp://a.rtmp.youtube.com/live2",
             "backupStreamUrl": "rtmp://b.rtmp.youtube.com/live2?backup=1",
             "streamKey": "xxxx-yyyy-zzzz",
