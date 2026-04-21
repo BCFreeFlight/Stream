@@ -204,7 +204,7 @@ Required OAuth scopes:
 
 ## YouTube Broadcast Lifecycle
 
-The stream resource (RTMP URL and stream key) is created **once** during `--install` and reused permanently. A new broadcast is created automatically each time `--start` runs (if the previous one was completed). The embedded stream URL uses the **channel-based format** (`/embed/live_stream?channel=...`) which always shows whatever broadcast is currently live — it is not tied to any specific broadcast ID.
+The stream resource (RTMP URL and stream key) is created **once** during `--install` and reused permanently. A **new broadcast is always created** on every `--start` — any previously active broadcast is retired first. The embedded stream URL uses the **channel-based format** (`/embed/live_stream?channel=...`) which always shows whatever broadcast is currently live — it is not tied to any specific broadcast ID.
 
 ### During `--install`:
 1. `liveBroadcasts.insert` — create broadcast (with `enableAutoStop: false` to prevent auto-completion)
@@ -216,20 +216,19 @@ The stream resource (RTMP URL and stream key) is created **once** during `--inst
 ### During `--start`:
 1. Read `broadcastId`, `streamURL`, `streamKey` from config
 2. Clean up orphaned broadcasts — query `liveBroadcasts.list` for any broadcasts in `live`, `ready`, `testing`, or `created` state and transition them to `complete`
-3. If the current broadcast is in `complete` state, automatically create a new one, bind the existing stream, and update `config.toml`
-4. Update the broadcast title with today's date via `liveBroadcasts.update`
-5. Launch ffmpeg pointing at the RTMP URL
-5. Wait for stream to become active
-6. If broadcast is not already live: `liveBroadcasts.transition` → `testing` → `live`
-7. If broadcast is already live: skip transition, just stream
+3. Retire the current broadcast — if the configured broadcast is in any active state, transition it to `complete`
+4. Create a new broadcast, bind the existing stream, and update `config.toml`
+5. Update the broadcast title with today's date via `liveBroadcasts.update`
+6. Launch ffmpeg pointing at the RTMP URL
+7. Wait for stream to become active
+8. `liveBroadcasts.transition` → `testing` → `live`
 
 ### During `--stop`:
 1. Stop the ffmpeg process
 2. Transition the broadcast to `complete` — this archives the stream as a VOD on the channel
-3. The next `--start` will create a fresh broadcast automatically
 
 ### Retry behavior:
-- On retry, the script reconnects to the **same** broadcast — it does not create a new one
+- On retry, the script reconnects to the **same** broadcast created at startup — it does not create a new one
 - Retries alternate between the primary `streamURL` and `backupStreamUrl` (if configured)
 
 ---
