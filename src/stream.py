@@ -139,6 +139,7 @@ CONFIG_COMMENTS = {
     "stopSentinel": "# Sentinel file whose presence tells the retry loop to stop",
     "logDir": "# Directory for daily log files",
     "logRetentionDays": "# Delete log files older than this many days",
+    "logLevel": '# Log verbosity: "debug", "info", "warning", or "error"',
     "retryDelaySecs": "# Seconds to wait between retry attempts when ffmpeg exits",
     "terminal": "# Terminal emulator used by the start cron job (auto-detected)",
     "[google]": "# Google OAuth 2.0 credentials — get these from the Cloud Console",
@@ -164,6 +165,7 @@ CONFIG_DEFAULTS = {
     "stopSentinel": "./stream.stop",
     "logDir": "./logs",
     "logRetentionDays": 15,
+    "logLevel": "info",
     "retryDelaySecs": 5,
     "terminal": "",
     "google": {
@@ -194,6 +196,9 @@ CONFIG_DEFAULTS = {
         "update": "0 0 * * *",
     },
 }
+
+
+LOG_LEVELS = {"debug": 0, "info": 1, "warning": 2, "error": 3}
 
 
 def _deep_merge_defaults(defaults, config):
@@ -252,7 +257,8 @@ def _migrate_config():
         return
     try:
         config = load_config()
-    except Exception:
+    except Exception as exc:
+        print(f"Config migration skipped: {exc}")
         return
     migrated = _deep_merge_defaults(CONFIG_DEFAULTS, config)
     if migrated != config:
@@ -329,12 +335,16 @@ def load_resources():
 class Logger:
     """Writes timestamped log lines to a daily file and mirrors them to stdout."""
 
-    def __init__(self, log_dir, retention_days):
+    def __init__(self, log_dir, retention_days, level=1):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.retention_days = retention_days
+        self._level = level
         self._log_file = self.log_dir / f"{datetime.date.today().isoformat()}.log"
         self._fh = open(self._log_file, "a")
+
+    def debug(self, message):
+        self._write("DEBUG", message)
 
     def info(self, message):
         self._write("INFO", message)
@@ -359,6 +369,8 @@ class Logger:
         self._fh.close()
 
     def _write(self, level, message):
+        if LOG_LEVELS.get(level.lower(), 1) < self._level:
+            return
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
         line = f"[{timestamp}] [{level}] {message}"
         print(line, flush=True)
@@ -369,14 +381,24 @@ class Logger:
 class PrintLogger:
     """Minimal logger that writes to stdout only, for use during --install."""
 
+    def __init__(self, level=1):
+        self._level = level
+
+    def debug(self, message):
+        if LOG_LEVELS["debug"] >= self._level:
+            print(f"  [DEBUG] {message}")
+
     def info(self, message):
-        print(f"  [INFO] {message}")
+        if LOG_LEVELS["info"] >= self._level:
+            print(f"  [INFO] {message}")
 
     def warn(self, message):
-        print(f"  [WARN] {message}")
+        if LOG_LEVELS["warning"] >= self._level:
+            print(f"  [WARN] {message}")
 
     def error(self, message):
-        print(f"  [ERROR] {message}")
+        if LOG_LEVELS["error"] >= self._level:
+            print(f"  [ERROR] {message}")
 
 
 def _parse_log_date(path):
@@ -387,9 +409,16 @@ def _parse_log_date(path):
         return None
 
 
-def create_logger(config):
-    """Create a file-based Logger instance from the current configuration."""
-    return Logger(SCRIPT_DIR / config["logDir"], config["logRetentionDays"])
+def create_logger(config, level_override=None):
+    """Create a file-based Logger instance from the current configuration.
+
+    level_override is a numeric level from LOG_LEVELS that wins over config when provided.
+    """
+    configured = config.get("logLevel", "info").lower()
+    level = LOG_LEVELS.get(configured, LOG_LEVELS["info"])
+    if level_override is not None:
+        level = level_override
+    return Logger(SCRIPT_DIR / config["logDir"], config["logRetentionDays"], level)
 
 
 # ── Authentication ───────────────────────────────────────────────────────────
@@ -429,7 +458,7 @@ def _refresh_credentials(creds, logger):
         save_env_value("GOOGLE_ACCESS_TOKEN", creds.token)
         if creds.refresh_token:
             save_env_value("GOOGLE_REFRESH_TOKEN", creds.refresh_token)
-        logger.info("Access token refreshed")
+        logger.debug("Access token refreshed")
         return True
     except Exception as exc:
         logger.warn(f"Token refresh failed: {exc}")
@@ -457,7 +486,7 @@ def get_valid_credentials(config, logger):
 
     creds = _build_credentials_from_env(config)
     if creds.valid:
-        logger.info("Using existing valid access token")
+        logger.debug("Using existing valid access token")
         return creds
 
     if _refresh_credentials(creds, logger):
@@ -661,9 +690,9 @@ def create_stream_resource(youtube, logger):
 
 def bind_stream_to_broadcast(youtube, broadcast_id, stream_id, logger):
     """Bind a live stream to a broadcast."""
-    logger.info(f"Binding stream {stream_id} → broadcast {broadcast_id}")
+    logger.debug(f"Binding stream {stream_id} → broadcast {broadcast_id}")
     _api_bind_broadcast(youtube, broadcast_id, stream_id)
-    logger.info("Stream bound to broadcast")
+    logger.debug("Stream bound to broadcast")
 
 
 def apply_broadcast_category(youtube, broadcast_id, category_id, logger):
@@ -674,7 +703,7 @@ def apply_broadcast_category(youtube, broadcast_id, category_id, logger):
             return
         snippet["categoryId"] = category_id
         _api_update_video_snippet(youtube, broadcast_id, snippet)
-        logger.info(f"Video category set to {category_id}")
+        logger.debug(f"Video category set to {category_id}")
     except HttpError as exc:
         logger.warn(f"Could not set video category: {exc}")
 
@@ -689,7 +718,7 @@ def apply_video_embeddable(youtube, broadcast_id, embeddable, logger):
     """
     try:
         _api_update_video_status(youtube, broadcast_id, {"embeddable": embeddable})
-        logger.info(f"Video embeddable set to {embeddable}")
+        logger.debug(f"Video embeddable set to {embeddable}")
     except HttpError as exc:
         logger.warn(f"Could not set video embeddable: {exc}")
 
@@ -715,11 +744,11 @@ def update_broadcast_title(youtube, broadcast_id, config, logger):
 
 def find_stream_by_key(youtube, stream_key, logger):
     """Search the user's live streams for one whose streamName matches the key."""
-    logger.info("Searching for stream resource matching configured key")
+    logger.debug("Searching for stream resource matching configured key")
     for item in _api_list_my_streams(youtube):
         if item["cdn"]["ingestionInfo"]["streamName"] == stream_key:
             stream_id = item["id"]
-            logger.info(f"Found matching stream resource: {stream_id}")
+            logger.debug(f"Found matching stream resource: {stream_id}")
             return stream_id
     logger.warn("No matching stream resource found")
     return None
@@ -730,7 +759,7 @@ def wait_for_stream_active(youtube, stream_id, logger):
     logger.info(f"Waiting for stream {stream_id} to become active")
     for _ in range(120):
         status = _api_get_stream_status(youtube, stream_id)
-        logger.info(f"Stream status: {status}")
+        logger.debug(f"Stream status: {status}")
         if status == "active":
             return True
         if _stop_requested:
@@ -743,7 +772,7 @@ def wait_for_stream_active(youtube, stream_id, logger):
 def _attempt_testing_transition(youtube, broadcast_id, logger):
     """Transition to the testing phase and wait for confirmation."""
     try:
-        logger.info(f"Transitioning broadcast {broadcast_id} → testing")
+        logger.debug(f"Transitioning broadcast {broadcast_id} → testing")
         _api_transition_broadcast(youtube, broadcast_id, "testing")
         _poll_until_lifecycle_status(youtube, broadcast_id, "testing", logger)
     except HttpError as exc:
@@ -754,7 +783,7 @@ def _poll_until_lifecycle_status(youtube, broadcast_id, target, logger):
     """Poll until the broadcast reaches the target lifecycle status."""
     for _ in range(60):
         status = _api_get_broadcast_lifecycle(youtube, broadcast_id)
-        logger.info(f"Broadcast lifecycle: {status}")
+        logger.debug(f"Broadcast lifecycle: {status}")
         if status == target:
             return
         time.sleep(3)
@@ -805,10 +834,10 @@ def _retire_orphaned_broadcast(youtube, broadcast_id, lifecycle, logger):
     """
     if lifecycle in ("live", "testing"):
         _api_transition_broadcast(youtube, broadcast_id, "complete")
-        logger.info(f"Completed orphaned broadcast: {broadcast_id} (was {lifecycle})")
+        logger.debug(f"Completed orphaned broadcast: {broadcast_id} (was {lifecycle})")
     else:
         _api_delete_broadcast(youtube, broadcast_id)
-        logger.info(f"Deleted orphaned broadcast: {broadcast_id} (was {lifecycle})")
+        logger.debug(f"Deleted orphaned broadcast: {broadcast_id} (was {lifecycle})")
 
 
 def _create_fresh_broadcast(youtube, config, logger):
@@ -844,7 +873,7 @@ def ensure_broadcast_live(youtube, broadcast_id, config, logger, res=None):
     Raises RuntimeError if the broadcast is in an unrecoverable state.
     """
     status = _api_get_broadcast_lifecycle(youtube, broadcast_id)
-    logger.info(f"Broadcast lifecycle status: {status}")
+    logger.debug(f"Broadcast lifecycle status: {status}")
 
     if status == "live":
         logger.info("Broadcast is already live")
@@ -982,7 +1011,11 @@ def relay_ffmpeg_output(process, logger):
 
     def _pump():
         for line in iter(process.stdout.readline, ""):
-            logger.info(f"[ffmpeg] {line.rstrip()}")
+            stripped = line.rstrip()
+            if "warning" in stripped.lower():
+                logger.warn(f"[ffmpeg] {stripped}")
+            else:
+                logger.debug(f"[ffmpeg] {stripped}")
 
     thread = threading.Thread(target=_pump, name="ffmpeg-output", daemon=True)
     thread.start()
@@ -1078,7 +1111,7 @@ def kill_existing_process(config, logger):
         return
 
     if not _is_process_running(pid):
-        logger.info(f"Stale PID file (process {pid} not running), removing")
+        logger.debug(f"Stale PID file (process {pid} not running), removing")
         cleanup_pid_file(config)
         return
 
@@ -1086,7 +1119,7 @@ def kill_existing_process(config, logger):
     os.kill(pid, signal.SIGTERM)
     _wait_for_process_exit(pid, 30, logger)
     cleanup_pid_file(config)
-    logger.info(f"Process {pid} terminated")
+    logger.debug(f"Process {pid} terminated")
 
 
 # ── Signal Handling ──────────────────────────────────────────────────────────
@@ -1528,8 +1561,8 @@ def _try_reuse_existing_credentials(config, res):
         if _refresh_credentials(creds, logger):
             print(res["install"]["messages"]["oauth_skipped"])
             return creds
-    except Exception:
-        pass
+    except Exception as exc:
+        PrintLogger().debug(f"Credential reuse failed: {exc}")
     return None
 
 
@@ -1770,7 +1803,7 @@ def _stream_until_exit(config, logger, ctx, res=None):
                 return
             raise RuntimeError("Stream did not become active")
     else:
-        logger.info("Stream ID unavailable — waiting for ffmpeg to establish connection")
+        logger.debug("Stream ID unavailable — waiting for ffmpeg to establish connection")
         time.sleep(15)
 
     ensure_broadcast_live(ctx.youtube, ctx.broadcast_id, config, logger, res)
@@ -1793,7 +1826,7 @@ def _cleanup_ffmpeg():
 def _wait_before_retry(config, logger):
     """Sleep for the configured delay. Returns False if stop was requested."""
     delay = config["retryDelaySecs"]
-    logger.info(f"Retrying in {delay} seconds...")
+    logger.warn(f"Retrying in {delay} seconds...")
     time.sleep(delay)
     return not is_stop_requested(config)
 
@@ -1814,7 +1847,7 @@ def _run_stream_loop(config, logger, res=None):
 
             _stream_until_exit(config, logger, ctx, res)
         except Exception as exc:
-            logger.error(f"Streaming error: {exc}")
+            logger.warn(f"Streaming error: {exc}")
             _cleanup_ffmpeg()
 
         if is_stop_requested(config):
@@ -1865,7 +1898,7 @@ def _retire_current_broadcast_safely(config, logger):
         logger.warn(f"Could not retire current broadcast: {exc}")
 
 
-def do_start():
+def do_start(level_override=None):
     """Start the RTSP-to-YouTube stream with automatic retry on failure."""
     global _config
 
@@ -1877,7 +1910,7 @@ def do_start():
     res = load_resources()
     _validate_youtube_config(config, res)
 
-    logger = create_logger(config)
+    logger = create_logger(config, level_override)
 
     _prepare_stream_process(config, logger)
     register_signal_handlers()
@@ -1896,23 +1929,23 @@ def do_start():
 def _signal_running_process(config, logger):
     """Write the stop sentinel and send SIGTERM to the running stream process."""
     write_stop_sentinel(config)
-    logger.info("Stop sentinel written")
+    logger.debug("Stop sentinel written")
 
     pid = read_pid_file(config)
     if not pid:
         logger.warn("No PID file found")
         return
 
-    logger.info(f"Sending SIGTERM to process {pid}")
+    logger.debug(f"Sending SIGTERM to process {pid}")
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError as exc:
         logger.warn(f"Could not signal process {pid}: {exc}")
         return
 
-    logger.info("Waiting for process to exit...")
+    logger.debug("Waiting for process to exit...")
     _wait_for_process_exit(pid, 60, logger)
-    logger.info(f"Process {pid} exited")
+    logger.debug(f"Process {pid} exited")
 
 
 def _cleanup_stop_files(config):
@@ -1933,24 +1966,24 @@ def _complete_broadcast(config, logger):
         youtube = build_youtube_service(creds)
 
         status = _api_get_broadcast_lifecycle(youtube, broadcast_id)
-        logger.info(f"Broadcast lifecycle status: {status}")
+        logger.debug(f"Broadcast lifecycle status: {status}")
 
         if status == "live":
             _api_transition_broadcast(youtube, broadcast_id, "complete")
             logger.info(f"Broadcast {broadcast_id} transitioned to complete (archived)")
         elif status == "complete":
-            logger.info("Broadcast is already complete")
+            logger.debug("Broadcast is already complete")
         else:
             logger.warn(f"Broadcast in state '{status}' — cannot complete")
     except Exception as exc:
         logger.warn(f"Could not complete broadcast: {exc}")
 
 
-def do_stop():
+def do_stop(level_override=None):
     """Gracefully stop the running stream and archive the broadcast."""
     config = load_config()
     load_env()
-    logger = create_logger(config)
+    logger = create_logger(config, level_override)
 
     logger.info(f"BC Free Flight Stream {__version__}")
     _signal_running_process(config, logger)
@@ -1991,7 +2024,7 @@ def _stream_process_already_running(config):
     return pid is not None and _is_process_running(pid)
 
 
-def do_recover():
+def do_recover(level_override=None):
     """Restart the stream if the current time falls inside the daily window.
 
     Intended to be run at boot (via @reboot cron) so that a power loss or
@@ -2000,7 +2033,7 @@ def do_recover():
     """
     config = load_config()
     load_env()
-    logger = create_logger(config)
+    logger = create_logger(config, level_override)
 
     logger.info(f"BC Free Flight Stream {__version__} — recover")
 
@@ -2016,7 +2049,7 @@ def do_recover():
 
     logger.info("Inside stream window — starting stream")
     logger.close()
-    do_start()
+    do_start(level_override)
 
 
 # ── --update Command ─────────────────────────────────────────────────────────
@@ -2241,7 +2274,21 @@ def main():
     group.add_argument("--set-property", nargs=2, metavar=("KEY", "VALUE"), action="append",
                        dest="set_property",
                        help="Set a config.toml property by dot-notation key. Can be repeated.")
+    parser.add_argument(
+        "--log-level",
+        metavar="LEVEL",
+        help="Override log verbosity for this run: debug, info, warning, error",
+    )
     args = parser.parse_args()
+
+    log_level_override = None
+    if args.log_level is not None:
+        normalized = args.log_level.lower()
+        if normalized not in LOG_LEVELS:
+            parser.error(
+                f"Invalid --log-level '{args.log_level}'. Choose: debug, info, warning, error"
+            )
+        log_level_override = LOG_LEVELS[normalized]
 
     if args.install:
         do_install()
@@ -2250,11 +2297,11 @@ def main():
     elif args.reinstall:
         do_reinstall()
     elif args.start:
-        do_start()
+        do_start(log_level_override)
     elif args.stop:
-        do_stop()
+        do_stop(log_level_override)
     elif args.recover:
-        do_recover()
+        do_recover(log_level_override)
     elif args.update:
         do_update()
     elif args.roll_back:

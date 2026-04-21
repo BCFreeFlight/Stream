@@ -187,16 +187,43 @@ class TestStartFfmpegProcess:
 
 class TestRelayFfmpegOutput:
     def test_relay_ffmpeg_output_logs_lines(self, stream, mock_logger):
-        """Each line from ffmpeg stdout is logged with [ffmpeg] prefix."""
+        """Normal ffmpeg lines are logged at debug level with [ffmpeg] prefix."""
         mock_process = MagicMock()
         mock_process.stdout.readline.side_effect = ["line1\n", "line2\n", ""]
 
         thread = stream.relay_ffmpeg_output(mock_process, mock_logger)
         thread.join(timeout=2)
 
-        logged_messages = [call[0][0] for call in mock_logger.info.call_args_list]
+        logged_messages = [call[0][0] for call in mock_logger.debug.call_args_list]
         assert "[ffmpeg] line1" in logged_messages
         assert "[ffmpeg] line2" in logged_messages
+
+    def test_relay_ffmpeg_output_warning_line_goes_to_warn(self, stream, mock_logger):
+        """ffmpeg lines containing 'warning' are routed to logger.warn()."""
+        mock_process = MagicMock()
+        mock_process.stdout.readline.side_effect = [
+            "  WARNING: library configuration mismatch\n",
+            "",
+        ]
+
+        thread = stream.relay_ffmpeg_output(mock_process, mock_logger)
+        thread.join(timeout=2)
+
+        warn_messages = [call[0][0] for call in mock_logger.warn.call_args_list]
+        assert any("WARNING" in m for m in warn_messages)
+        debug_messages = [call[0][0] for call in mock_logger.debug.call_args_list]
+        assert not any("WARNING" in m for m in debug_messages)
+
+    def test_relay_ffmpeg_output_warning_case_insensitive(self, stream, mock_logger):
+        """Warning detection is case-insensitive (e.g. 'warning:' lowercase)."""
+        mock_process = MagicMock()
+        mock_process.stdout.readline.side_effect = ["warning: something\n", ""]
+
+        thread = stream.relay_ffmpeg_output(mock_process, mock_logger)
+        thread.join(timeout=2)
+
+        warn_messages = [call[0][0] for call in mock_logger.warn.call_args_list]
+        assert any("warning" in m.lower() for m in warn_messages)
 
     def test_relay_ffmpeg_output_returns_daemon_thread(self, stream, mock_logger):
         """Relay runs in a background daemon thread so it cannot block shutdown."""
@@ -234,5 +261,5 @@ class TestRelayFfmpegOutput:
         produced.put("")  # signal EOF so the daemon can exit
         thread.join(timeout=3)
 
-        logged = [call[0][0] for call in mock_logger.info.call_args_list]
+        logged = [call[0][0] for call in mock_logger.debug.call_args_list]
         assert "[ffmpeg] early-line" in logged

@@ -76,6 +76,7 @@ def sample_config():
         "stopSentinel": "./stream.stop",
         "logDir": "./logs",
         "logRetentionDays": 15,
+        "logLevel": "info",
         "retryDelaySecs": 5,
         "terminal": "gnome-terminal",
         "cron": {
@@ -105,7 +106,7 @@ def sample_resources(stream):
 @pytest.fixture
 def mock_logger():
     """Return a MagicMock logger with the expected interface."""
-    return MagicMock(spec=["info", "warn", "error", "close", "cleanup_old_logs"])
+    return MagicMock(spec=["debug", "info", "warn", "error", "close", "cleanup_old_logs"])
 
 
 @pytest.fixture

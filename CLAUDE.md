@@ -99,6 +99,7 @@ pidFile = "./stream.pid"
 stopSentinel = "./stream.stop"
 logDir = "./logs"
 logRetentionDays = 15
+logLevel = "info"
 retryDelaySecs = 5
 terminal = "gnome-terminal"
 
@@ -162,6 +163,7 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 | `--update` | Backs up `stream.py`, `resources.toml`, and `config.toml` to a versioned zip in `backup/`, downloads the latest release from GitHub, and replaces `stream.py` and `resources.toml`. |
 | `--roll-back [VERSION]` | Restores `stream.py`, `resources.toml`, and `config.toml` from a backup. Without a version, lists available backups interactively. |
 | `--set-property KEY VALUE` | Sets a single `config.toml` value by dot-notation key (e.g. `cron.autoUpdate true`). Can be repeated for multiple properties in one invocation. Keys are validated against `CONFIG_DEFAULTS`; unknown keys and section names are rejected. |
+| `--log-level LEVEL` | Overrides log verbosity for the current run only (`debug`, `info`, `warning`, `error` — case-insensitive). Does not modify `config.toml`. Invalid values exit with an error. |
 
 ---
 

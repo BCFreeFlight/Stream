@@ -299,7 +299,7 @@ class TestHighLevelOrchestration:
         yt = MagicMock()
         stream.apply_video_embeddable(yt, "bid", True, mock_logger)
         mock_update.assert_called_once_with(yt, "bid", {"embeddable": True})
-        mock_logger.info.assert_called_once()
+        mock_logger.debug.assert_called_once()
 
     @patch("stream._api_update_video_status")
     def test_apply_video_embeddable_false(self, mock_update, mock_logger):
