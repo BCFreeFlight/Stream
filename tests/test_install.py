@@ -125,7 +125,8 @@ class TestPromptAllConfigValues:
                 "backupStreamUrl": "",
                 "streamKey": "",
             },
-            "cron": {"enabled": True, "start": "30 6 * * *", "stop": "25 18 * * *"},
+            "cron": {"enabled": True, "start": "30 6 * * *", "stop": "25 18 * * *",
+                     "autoUpdate": False, "update": "0 0 * * *"},
         }
 
         # All non-empty existing values are auto-accepted by _smart_prompt.

@@ -82,6 +82,8 @@ def sample_config():
             "enabled": True,
             "start": "30 6 * * *",
             "stop": "25 18 * * *",
+            "autoUpdate": False,
+            "update": "0 0 * * *",
         },
     }
     return copy.deepcopy(config)

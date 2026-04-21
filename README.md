@@ -87,6 +87,8 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `terminal` | string | *(auto-detected)* | Terminal emulator for cron |
 | `cron.start` | string | `30 6 1-31 4-10 *` | Cron expression for daily start |
 | `cron.stop` | string | `25 18 1-31 4-10 *` | Cron expression for daily stop |
+| `cron.autoUpdate` | boolean | `false` | If `true`, registers an update cron job that runs `--update` on schedule |
+| `cron.update` | string | `0 0 * * *` | Cron expression for automatic update checks (only used when `autoUpdate` is `true`) |
 
 ### .env
 
@@ -191,13 +193,18 @@ Backups are created automatically by `--update` and stored in the `backup/` dire
 
 ## Crontab
 
-`--install` registers three cron entries (default: April through October):
+`--install` registers three cron entries by default (default: April through October), and optionally a fourth:
 
 | Job | Default Schedule | Behavior |
 |-----|-----------------|----------|
 | Start | `30 6 1-31 4-10 *` (6:30 AM) | Opens a terminal window and starts streaming |
 | Stop | `25 18 1-31 4-10 *` (6:25 PM) | Runs directly (no terminal) to stop the stream |
 | Recover | `@reboot` | Runs `--recover` headless at boot; resumes the stream if the current time is inside the window |
+| Update *(optional)* | `0 0 * * *` (midnight) | Runs `--update` headless; only registered when `cron.autoUpdate = true` |
+
+The update cron is disabled by default (`autoUpdate = false`) to prevent unattended updates without user consent. Enable it during `--install` or by setting `cron.autoUpdate = true` and re-running `--install`.
+
+When `--update` is run on an existing installation that pre-dates this feature, the two new config keys (`autoUpdate = false`, `update = "0 0 * * *"`) are written automatically so the config stays current.
 
 The start job opens a single terminal window titled "BC Free Flight Stream". When the stop job runs, the stream process exits and the terminal window closes. This prevents terminal window accumulation over time. The recover job provides crash resilience: if the machine reboots during the streaming window, the stream is picked back up automatically.
 

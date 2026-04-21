@@ -27,6 +27,17 @@ All Python packages are self-installed by `stream.py` on first run. No `requirem
 - OAuth 2.0 credentials (Desktop app type) from the Google Cloud Console
 - An RTSP-capable camera accessible from the host machine
 
+## Configuration Keys (new in this release)
+
+Two new keys were added to the `[cron]` section of `config.toml`:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `cron.autoUpdate` | boolean | `false` | When `true`, a cron job runs `--update` on the configured schedule |
+| `cron.update` | string | `0 0 * * *` | Cron expression for automatic update checks |
+
+Existing installs receive these keys automatically (with defaults) the first time `--update` is run after upgrading.
+
 ## Runtime Files
 
 These files are generated locally beside `stream.py` and must never be committed:
