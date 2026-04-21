@@ -1518,11 +1518,19 @@ def _connect_to_broadcast(config, logger, attempt_number=0):
     rtmp_url = select_rtmp_url(config, attempt_number)
     stream_key = yt["streamKey"]
 
-    stream_id = yt.get("streamId", "")
-    if not stream_id:
-        stream_id = find_stream_by_key(youtube, stream_key, logger) or ""
+    stream_id = _resolve_stream_id(youtube, yt, stream_key, config, logger)
 
     return BroadcastContext(youtube, broadcast_id, stream_id, rtmp_url, stream_key)
+
+
+def _resolve_stream_id(youtube, yt, stream_key, config, logger):
+    """Return the stream resource ID for the given key, updating config if it changed."""
+    resolved = find_stream_by_key(youtube, stream_key, logger) or ""
+    if resolved and resolved != yt.get("streamId", ""):
+        logger.info(f"Stream ID updated: {yt.get('streamId', '(none)')} → {resolved}")
+        config["youtube"]["streamId"] = resolved
+        save_config(config)
+    return resolved or yt.get("streamId", "")
 
 
 def _stream_until_exit(config, logger, ctx, res=None):

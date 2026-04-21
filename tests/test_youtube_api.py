@@ -264,6 +264,46 @@ class TestHighLevelOrchestration:
         result = stream.find_stream_by_key(MagicMock(), "key1", mock_logger)
         assert result is None
 
+    # -- _resolve_stream_id --------------------------------------------------
+
+    @patch("stream.save_config")
+    @patch("stream.find_stream_by_key")
+    def test_resolve_stream_id_returns_resolved(self, mock_find, mock_save, mock_logger, sample_config):
+        """Returns the ID found by find_stream_by_key."""
+        mock_find.return_value = "s-resolved"
+        sample_config["youtube"]["streamId"] = "s-resolved"
+        result = stream._resolve_stream_id(MagicMock(), sample_config["youtube"], "key", sample_config, mock_logger)
+        assert result == "s-resolved"
+
+    @patch("stream.save_config")
+    @patch("stream.find_stream_by_key")
+    def test_resolve_stream_id_updates_config_on_mismatch(self, mock_find, mock_save, mock_logger, sample_config):
+        """Updates config and saves when resolved ID differs from stored ID."""
+        mock_find.return_value = "s-new"
+        sample_config["youtube"]["streamId"] = "s-old"
+        stream._resolve_stream_id(MagicMock(), sample_config["youtube"], "key", sample_config, mock_logger)
+        assert sample_config["youtube"]["streamId"] == "s-new"
+        mock_save.assert_called_once_with(sample_config)
+
+    @patch("stream.save_config")
+    @patch("stream.find_stream_by_key")
+    def test_resolve_stream_id_no_save_when_unchanged(self, mock_find, mock_save, mock_logger, sample_config):
+        """Does not save config when resolved ID matches stored ID."""
+        mock_find.return_value = "s-same"
+        sample_config["youtube"]["streamId"] = "s-same"
+        stream._resolve_stream_id(MagicMock(), sample_config["youtube"], "key", sample_config, mock_logger)
+        mock_save.assert_not_called()
+
+    @patch("stream.save_config")
+    @patch("stream.find_stream_by_key")
+    def test_resolve_stream_id_falls_back_to_stored(self, mock_find, mock_save, mock_logger, sample_config):
+        """Falls back to stored streamId when find_stream_by_key returns None."""
+        mock_find.return_value = None
+        sample_config["youtube"]["streamId"] = "s-fallback"
+        result = stream._resolve_stream_id(MagicMock(), sample_config["youtube"], "key", sample_config, mock_logger)
+        assert result == "s-fallback"
+        mock_save.assert_not_called()
+
     # -- wait_for_stream_active ----------------------------------------------
 
     @patch("time.sleep")
