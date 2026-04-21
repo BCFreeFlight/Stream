@@ -130,9 +130,10 @@ class TestPromptAllConfigValues:
         }
 
         # All non-empty existing values are auto-accepted by _smart_prompt.
-        # Only client_secret is prompted (env is cleared). If any extra prompt
-        # for streamKey/streamURL/backupStreamUrl appears, StopIteration fires.
-        inputs = iter(["test-secret", "yes"])
+        # Only client_secret is prompted (env is cleared). cronSetup is now
+        # skipped because cron.enabled exists in the existing config.
+        # If any extra prompt appears, StopIteration fires.
+        inputs = iter(["test-secret"])
         with patch("builtins.input", lambda *a, **kw: next(inputs)), \
              patch("stream.load_env"), \
              patch.dict("os.environ", {}, clear=False):
@@ -143,3 +144,148 @@ class TestPromptAllConfigValues:
         assert config["youtube"]["backupStreamUrl"] == ""
         assert config["youtube"]["streamKey"] == ""
         assert secret == "test-secret"
+
+    def test_cron_enabled_skipped_when_existing(self, sample_resources):
+        """cronSetup is not prompted when cron.enabled already exists in the config."""
+        existing = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "rtsp://cam/live", "videoCodec": "copy",
+                       "audioCodec": "copy", "mute": False},
+            "youtube": {"broadcastTitle": "T: {date}", "privacy": "public",
+                        "categoryId": "22", "broadcastId": "b", "streamURL": "",
+                        "backupStreamUrl": "", "streamKey": ""},
+            "cron": {"enabled": False, "start": "", "stop": "",
+                     "autoUpdate": False, "update": ""},
+        }
+        # Only client_secret should be prompted — StopIteration fires on any extra prompt.
+        inputs = iter(["test-secret"])
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=existing)
+
+        assert config["cron"]["enabled"] is False
+
+    def test_cron_enabled_prompted_when_absent(self, sample_resources):
+        """cronSetup is prompted when cron.enabled is absent from the existing config."""
+        existing = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "rtsp://cam/live", "videoCodec": "copy",
+                       "audioCodec": "copy", "mute": False},
+            "youtube": {"broadcastTitle": "T: {date}", "privacy": "public",
+                        "categoryId": "22", "broadcastId": "b", "streamURL": "",
+                        "backupStreamUrl": "", "streamKey": ""},
+            "cron": {},  # no 'enabled' key — should trigger the prompt
+        }
+        # client_secret + cronSetup ("no" to disable cron)
+        inputs = iter(["test-secret", "no"])
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=existing)
+
+        assert config["cron"]["enabled"] is False
+
+
+# ── _write_env_file (token preservation) ────────────────────────────────────
+
+
+class TestWriteEnvFile:
+    def test_writes_empty_placeholders_on_first_install(self, tmp_script_dir, sample_resources):
+        """On a fresh install (no .env), empty placeholders are written for both token keys."""
+        stream._write_env_file("my-secret", sample_resources)
+
+        from dotenv import get_key
+        path = str(tmp_script_dir / ".env")
+        assert get_key(path, "GOOGLE_CLIENT_SECRET") == "my-secret"
+        assert get_key(path, "GOOGLE_REFRESH_TOKEN") == ""
+        assert get_key(path, "GOOGLE_ACCESS_TOKEN") == ""
+
+    def test_preserves_existing_tokens_on_reinstall(self, tmp_script_dir, sample_resources):
+        """On a re-install, existing GOOGLE_REFRESH_TOKEN and GOOGLE_ACCESS_TOKEN are kept."""
+        path = str(tmp_script_dir / ".env")
+        from dotenv import set_key as _set
+        _set(path, "GOOGLE_CLIENT_SECRET", "old-secret")
+        _set(path, "GOOGLE_REFRESH_TOKEN", "existing-refresh")
+        _set(path, "GOOGLE_ACCESS_TOKEN", "existing-access")
+
+        stream._write_env_file("new-secret", sample_resources)
+
+        from dotenv import get_key
+        assert get_key(path, "GOOGLE_CLIENT_SECRET") == "new-secret"
+        assert get_key(path, "GOOGLE_REFRESH_TOKEN") == "existing-refresh"
+        assert get_key(path, "GOOGLE_ACCESS_TOKEN") == "existing-access"
+
+    def test_always_updates_client_secret(self, tmp_script_dir, sample_resources):
+        """GOOGLE_CLIENT_SECRET is always overwritten even if previously set."""
+        path = str(tmp_script_dir / ".env")
+        from dotenv import set_key as _set, get_key
+        _set(path, "GOOGLE_CLIENT_SECRET", "old-secret")
+
+        stream._write_env_file("new-secret", sample_resources)
+
+        assert get_key(path, "GOOGLE_CLIENT_SECRET") == "new-secret"
+
+
+# ── _try_reuse_existing_credentials / _get_install_credentials ──────────────
+
+
+class TestInstallCredentialReuse:
+    def test_returns_none_when_no_refresh_token(self, tmp_script_dir, sample_config, sample_resources):
+        """Returns None when GOOGLE_REFRESH_TOKEN is absent."""
+        with patch("stream.load_env"), \
+             patch.dict("os.environ", {"GOOGLE_REFRESH_TOKEN": ""}, clear=False):
+            result = stream._try_reuse_existing_credentials(sample_config, sample_resources)
+
+        assert result is None
+
+    def test_returns_credentials_when_refresh_succeeds(self, tmp_script_dir, sample_config, sample_resources):
+        """Returns credentials when the refresh token is present and refresh succeeds."""
+        mock_creds = MagicMock()
+        with patch("stream.load_env"), \
+             patch.dict("os.environ", {"GOOGLE_REFRESH_TOKEN": "tok"}, clear=False), \
+             patch("stream._build_credentials_from_env", return_value=mock_creds), \
+             patch("stream._refresh_credentials", return_value=True):
+            result = stream._try_reuse_existing_credentials(sample_config, sample_resources)
+
+        assert result is mock_creds
+
+    def test_returns_none_when_refresh_fails(self, tmp_script_dir, sample_config, sample_resources):
+        """Returns None when the token refresh fails."""
+        mock_creds = MagicMock()
+        with patch("stream.load_env"), \
+             patch.dict("os.environ", {"GOOGLE_REFRESH_TOKEN": "expired"}, clear=False), \
+             patch("stream._build_credentials_from_env", return_value=mock_creds), \
+             patch("stream._refresh_credentials", return_value=False):
+            result = stream._try_reuse_existing_credentials(sample_config, sample_resources)
+
+        assert result is None
+
+    def test_returns_none_on_exception(self, tmp_script_dir, sample_config, sample_resources):
+        """Returns None when credential building raises an exception."""
+        with patch("stream.load_env"), \
+             patch.dict("os.environ", {"GOOGLE_REFRESH_TOKEN": "tok"}, clear=False), \
+             patch("stream._build_credentials_from_env", side_effect=Exception("boom")):
+            result = stream._try_reuse_existing_credentials(sample_config, sample_resources)
+
+        assert result is None
+
+    def test_get_install_credentials_reuses_when_valid(self, sample_config, sample_resources):
+        """_get_install_credentials skips the OAuth flow when reuse succeeds."""
+        mock_creds = MagicMock()
+        with patch("stream._try_reuse_existing_credentials", return_value=mock_creds) as mock_reuse, \
+             patch("stream._run_install_oauth") as mock_oauth:
+            result = stream._get_install_credentials(sample_config, "secret", sample_resources)
+
+        mock_oauth.assert_not_called()
+        assert result is mock_creds
+
+    def test_get_install_credentials_falls_back_to_oauth(self, sample_config, sample_resources):
+        """_get_install_credentials runs the OAuth flow when credential reuse returns None."""
+        mock_creds = MagicMock()
+        with patch("stream._try_reuse_existing_credentials", return_value=None), \
+             patch("stream._run_install_oauth", return_value=mock_creds) as mock_oauth:
+            result = stream._get_install_credentials(sample_config, "secret", sample_resources)
+
+        mock_oauth.assert_called_once_with(sample_config, "secret", sample_resources)
+        assert result is mock_creds

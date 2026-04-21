@@ -85,7 +85,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 # ── Third-Party ──────────────────────────────────────────────────────────────
 
 from croniter import croniter
-from dotenv import load_dotenv, set_key
+from dotenv import get_key, load_dotenv, set_key
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -1284,10 +1284,14 @@ def prompt_all_config_values(res, existing=None):
 
     # ── Schedule (cron) ──
     print(sections["schedule"])
-    cron_setup = _prompt(
-        prompts["cronSetup"], default="yes", validator=yes_no_validator
-    )
-    cron_enabled = cron_setup.lower() == "yes"
+    existing_cron_enabled = _get_nested(ex, "cron", "enabled", default=None)
+    if existing_cron_enabled is not None:
+        cron_enabled = existing_cron_enabled
+    else:
+        cron_setup = _prompt(
+            prompts["cronSetup"], default="yes", validator=yes_no_validator
+        )
+        cron_enabled = cron_setup.lower() == "yes"
 
     cron_start = ""
     cron_stop = ""
@@ -1370,12 +1374,19 @@ def _write_config_file(config, res):
 
 
 def _write_env_file(client_secret, res):
-    """Create the .env file with the client secret and empty token placeholders."""
+    """Write the client secret to .env, initializing token placeholders only if absent.
+
+    On a re-install, existing GOOGLE_REFRESH_TOKEN and GOOGLE_ACCESS_TOKEN are
+    preserved so the subsequent credential check can reuse them without forcing
+    a new browser OAuth flow.
+    """
     path = str(SCRIPT_DIR / ".env")
     Path(path).touch()
     set_key(path, "GOOGLE_CLIENT_SECRET", client_secret)
-    set_key(path, "GOOGLE_REFRESH_TOKEN", "")
-    set_key(path, "GOOGLE_ACCESS_TOKEN", "")
+    if not get_key(path, "GOOGLE_REFRESH_TOKEN"):
+        set_key(path, "GOOGLE_REFRESH_TOKEN", "")
+    if not get_key(path, "GOOGLE_ACCESS_TOKEN"):
+        set_key(path, "GOOGLE_ACCESS_TOKEN", "")
     print(res["install"]["messages"]["secrets_written"].format(path=path))
 
 
@@ -1399,6 +1410,39 @@ def _run_install_oauth(config, client_secret, res):
     set_key(env_path, "GOOGLE_ACCESS_TOKEN", creds.token)
     print(msgs["oauth_saved"])
     return creds
+
+
+def _try_reuse_existing_credentials(config, res):
+    """Return valid credentials from the existing .env without opening a browser.
+
+    Attempts to build credentials from the stored refresh token and refresh them.
+    Returns a Credentials object on success, or None if the tokens are missing,
+    expired, or otherwise invalid.
+    """
+    load_env()
+    if not os.environ.get("GOOGLE_REFRESH_TOKEN"):
+        return None
+    try:
+        creds = _build_credentials_from_env(config)
+        logger = PrintLogger()
+        if _refresh_credentials(creds, logger):
+            print(res["install"]["messages"]["oauth_skipped"])
+            return creds
+    except Exception:
+        pass
+    return None
+
+
+def _get_install_credentials(config, client_secret, res):
+    """Return valid credentials for the install flow, reusing existing ones if possible.
+
+    Skips the browser OAuth flow when a valid refresh token is already stored in
+    .env. Falls back to the full browser flow if the token is missing or invalid.
+    """
+    creds = _try_reuse_existing_credentials(config, res)
+    if creds is not None:
+        return creds
+    return _run_install_oauth(config, client_secret, res)
 
 
 def _setup_youtube_resources(config, creds, res):
@@ -1480,7 +1524,7 @@ def do_install():
     _install_ffmpeg_if_missing(res)
     print(res["install"]["messages"]["deps_verified"])
 
-    creds = _run_install_oauth(config, client_secret, res)
+    creds = _get_install_credentials(config, client_secret, res)
 
     print(res["install"]["sections"]["youtube_setup"])
     _setup_youtube_resources(config, creds, res)
