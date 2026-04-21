@@ -304,7 +304,7 @@ def run_oauth_flow(client_id, client_secret):
         }
     }
     flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-    return flow.run_local_server(port=0)
+    return flow.run_local_server(port=0, prompt="select_account")
 
 
 def _build_credentials_from_env(config):
