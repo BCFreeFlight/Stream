@@ -267,4 +267,4 @@ class TestRunOAuthFlow:
         assert args[0]["installed"]["client_id"] == "my-client-id"
         assert args[0]["installed"]["client_secret"] == "my-secret"
         assert args[1] == stream.SCOPES
-        mock_flow.run_local_server.assert_called_once_with(port=0)
+        mock_flow.run_local_server.assert_called_once_with(port=0, prompt="select_account")
