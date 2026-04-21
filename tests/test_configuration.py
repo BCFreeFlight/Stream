@@ -252,3 +252,140 @@ class TestTryLoadExistingConfig:
 
         result = stream._try_load_existing_config()
         assert result is None
+
+
+# ── _deep_merge_defaults ─────────────────────────────────────────────────────
+
+
+class TestDeepMergeDefaults:
+    def test_fills_in_missing_top_level_key(self):
+        """A key present in defaults but absent from config is added."""
+        defaults = {"a": 1, "b": 2}
+        config = {"a": 99}
+        result = stream._deep_merge_defaults(defaults, config)
+        assert result == {"a": 99, "b": 2}
+
+    def test_preserves_existing_user_values(self):
+        """Values already set by the user are never overwritten."""
+        defaults = {"key": "default-value"}
+        config = {"key": "user-value"}
+        result = stream._deep_merge_defaults(defaults, config)
+        assert result["key"] == "user-value"
+
+    def test_fills_in_missing_nested_key(self):
+        """A key missing from a nested section is filled in from defaults."""
+        defaults = {"section": {"a": 1, "b": 2}}
+        config = {"section": {"a": 99}}
+        result = stream._deep_merge_defaults(defaults, config)
+        assert result["section"]["b"] == 2
+        assert result["section"]["a"] == 99
+
+    def test_preserves_extra_user_keys_not_in_defaults(self):
+        """Keys the user added that are not in defaults are kept unchanged."""
+        defaults = {"a": 1}
+        config = {"a": 1, "extra": "user-added"}
+        result = stream._deep_merge_defaults(defaults, config)
+        assert result["extra"] == "user-added"
+
+    def test_does_not_mutate_inputs(self):
+        """Neither defaults nor config are modified in place."""
+        import copy
+        defaults = {"a": 1, "nested": {"x": 10}}
+        config = {"nested": {"y": 20}}
+        defaults_copy = copy.deepcopy(defaults)
+        config_copy = copy.deepcopy(config)
+        stream._deep_merge_defaults(defaults, config)
+        assert defaults == defaults_copy
+        assert config == config_copy
+
+    def test_empty_config_returns_all_defaults(self):
+        """An empty config dict is filled entirely from defaults."""
+        defaults = {"a": 1, "b": {"c": 2}}
+        result = stream._deep_merge_defaults(defaults, {})
+        assert result == defaults
+
+    def test_empty_defaults_returns_config_unchanged(self):
+        """Empty defaults leaves config untouched."""
+        config = {"a": 99}
+        result = stream._deep_merge_defaults({}, config)
+        assert result == config
+
+
+# ── _migrate_config ──────────────────────────────────────────────────────────
+
+
+class TestMigrateConfig:
+    def test_no_op_when_config_missing(self, tmp_script_dir):
+        """Does nothing and does not raise when config.toml does not exist."""
+        stream._migrate_config()  # should not raise
+
+    def test_no_op_when_config_corrupt(self, tmp_script_dir):
+        """Does nothing and does not raise when config.toml is unparseable."""
+        (tmp_script_dir / "config.toml").write_text("[not valid toml!!!")
+        stream._migrate_config()  # should not raise
+
+    def test_no_op_when_config_already_complete(self, tmp_script_dir, sample_config, capsys):
+        """Does not rewrite config.toml when no keys are missing."""
+        original_mtime = None
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+        original_mtime = config_path.stat().st_mtime
+
+        stream._migrate_config()
+
+        assert config_path.stat().st_mtime == original_mtime
+        assert "migrated" not in capsys.readouterr().out
+
+    def test_adds_missing_top_level_key(self, tmp_script_dir, sample_config, capsys):
+        """Writes back config.toml with the missing key filled in from defaults."""
+        del sample_config["retryDelaySecs"]
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        result = stream.load_config()
+        assert result["retryDelaySecs"] == stream.CONFIG_DEFAULTS["retryDelaySecs"]
+        assert "migrated" in capsys.readouterr().out
+
+    def test_adds_missing_nested_key(self, tmp_script_dir, sample_config, capsys):
+        """Fills in a missing key inside a nested section."""
+        del sample_config["youtube"]["backupStreamUrl"]
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        result = stream.load_config()
+        assert result["youtube"]["backupStreamUrl"] == stream.CONFIG_DEFAULTS["youtube"]["backupStreamUrl"]
+        assert "migrated" in capsys.readouterr().out
+
+    def test_preserves_user_values_when_migrating(self, tmp_script_dir, sample_config):
+        """Existing user values are never overwritten during migration."""
+        del sample_config["retryDelaySecs"]
+        sample_config["youtube"]["broadcastId"] = "my-real-broadcast-id"
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        result = stream.load_config()
+        assert result["youtube"]["broadcastId"] == "my-real-broadcast-id"
+
+    def test_supersedes_apply_auto_update_config_defaults(self, tmp_script_dir, sample_config):
+        """Config missing autoUpdate/update cron keys is migrated correctly."""
+        del sample_config["cron"]["autoUpdate"]
+        del sample_config["cron"]["update"]
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        result = stream.load_config()
+        assert result["cron"]["autoUpdate"] is False
+        assert result["cron"]["update"] == "0 0 * * *"

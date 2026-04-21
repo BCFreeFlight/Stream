@@ -159,6 +159,68 @@ CONFIG_COMMENTS = {
     "update": "# Cron schedule for automatic update checks (e.g. daily at midnight)",
 }
 
+CONFIG_DEFAULTS = {
+    "pidFile": "./stream.pid",
+    "stopSentinel": "./stream.stop",
+    "logDir": "./logs",
+    "logRetentionDays": 15,
+    "retryDelaySecs": 5,
+    "terminal": "",
+    "google": {
+        "clientId": "",
+    },
+    "stream": {
+        "rtspUrl": "",
+        "videoCodec": "copy",
+        "audioCodec": "copy",
+        "mute": False,
+    },
+    "youtube": {
+        "broadcastTitle": "My Location: {date}",
+        "privacy": "public",
+        "categoryId": "22",
+        "enableMonitorStream": False,
+        "embeddable": True,
+        "broadcastId": "",
+        "streamURL": "",
+        "backupStreamUrl": "",
+        "streamKey": "",
+    },
+    "cron": {
+        "enabled": True,
+        "start": "30 6 1-31 4-10 *",
+        "stop": "25 18 1-31 4-10 *",
+        "autoUpdate": False,
+        "update": "0 0 * * *",
+    },
+}
+
+
+def _deep_merge_defaults(defaults, config):
+    """Return config with any keys absent from defaults filled in recursively."""
+    merged = dict(defaults)
+    for key, value in config.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_defaults(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _migrate_config():
+    """Fill any missing config keys with schema defaults and persist if changed."""
+    config_path = SCRIPT_DIR / "config.toml"
+    if not config_path.exists():
+        return
+    try:
+        config = load_config()
+    except Exception:
+        return
+    migrated = _deep_merge_defaults(CONFIG_DEFAULTS, config)
+    if migrated != config:
+        save_config(migrated)
+        print("Config migrated: new default keys added to config.toml.")
+
 
 def save_config(config):
     """Write config.toml to the script directory with inline comments."""
@@ -1769,6 +1831,7 @@ def do_start():
     """Start the RTSP-to-YouTube stream with automatic retry on failure."""
     global _config
 
+    _migrate_config()
     config = load_config()
     _config = config
     load_env()
@@ -1976,35 +2039,9 @@ def _download_release_asset(filename):
     urllib.request.urlretrieve(url, dest)
 
 
-def _apply_auto_update_config_defaults():
-    """Add missing autoUpdate/update cron keys to an existing install without prompting.
-
-    Called by --update so that existing installs receive the new config schema keys
-    (defaulting to autoUpdate=false, update="0 0 * * *") without requiring a
-    full --reinstall.
-    """
-    config_path = SCRIPT_DIR / "config.toml"
-    if not config_path.exists():
-        return
-    try:
-        config = load_config()
-    except Exception:
-        return
-    cron = config.get("cron", {})
-    if "autoUpdate" in cron and "update" in cron:
-        return
-    if "autoUpdate" not in cron:
-        cron["autoUpdate"] = False
-    if "update" not in cron:
-        cron["update"] = "0 0 * * *"
-    config["cron"] = cron
-    save_config(config)
-    print("Auto-update config defaults applied to existing install.")
-
-
 def do_update():
     """Download the latest release from GitHub, backing up current files first."""
-    _apply_auto_update_config_defaults()
+    _migrate_config()
     res = load_resources()
     msgs = res.get("update", {})
 
