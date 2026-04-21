@@ -2030,7 +2030,7 @@ def _backup_dir():
 
 
 def _backup_current_files():
-    """Create a zip backup of the current script and resources before updating.
+    """Create a zip backup of stream.py, resources.toml, and config.toml before updating.
 
     The backup is saved to backup/stream.<current_version>.bak.zip.
     """
@@ -2165,7 +2165,7 @@ def _prompt_backup_selection(backups, res):
 
 
 def _restore_from_backup(backup_path):
-    """Extract a backup zip, replacing the current script and resources."""
+    """Extract a backup zip, replacing stream.py, resources.toml, and config.toml."""
     import zipfile
 
     with zipfile.ZipFile(backup_path, "r") as zf:
@@ -2173,7 +2173,7 @@ def _restore_from_backup(backup_path):
 
 
 def do_rollback(version=None):
-    """Restore stream.py and resources.toml from a previous backup.
+    """Restore stream.py, resources.toml, and config.toml from a previous backup.
 
     If version is provided, restores that specific backup.
     Otherwise, lists available backups and prompts the user to choose.

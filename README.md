@@ -168,7 +168,7 @@ Clean-slate setup. After a `yes` confirmation prompt, this chains:
 python3 stream.py --update
 ```
 
-Backs up the current `stream.py` and `resources.toml` into a versioned zip in the `backup/` directory (e.g., `backup/stream.v0.1.3.bak.zip`), then downloads and replaces both files from the latest GitHub release.
+Backs up the current `stream.py`, `resources.toml`, and `config.toml` into a versioned zip in the `backup/` directory (e.g., `backup/stream.v0.1.3.bak.zip`), then downloads and replaces `stream.py` and `resources.toml` from the latest GitHub release.
 
 ### Roll back to a previous version
 
