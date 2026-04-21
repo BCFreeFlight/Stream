@@ -131,7 +131,7 @@ class TestDoUpdate:
         with patch.object(stream, "__version__", "v0.1.5"), \
              patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
              patch("stream.load_resources", return_value=sample_resources), \
-             patch("stream._apply_auto_update_config_defaults"):
+             patch("stream._migrate_config"):
             stream.do_update()
 
         captured = capsys.readouterr()
@@ -142,7 +142,7 @@ class TestDoUpdate:
         with patch.object(stream, "__version__", "v0.1.4"), \
              patch("stream._get_latest_release_tag", return_value=None), \
              patch("stream.load_resources", return_value=sample_resources), \
-             patch("stream._apply_auto_update_config_defaults"):
+             patch("stream._migrate_config"):
             stream.do_update()
 
         captured = capsys.readouterr()
@@ -159,7 +159,7 @@ class TestDoUpdate:
              patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "stream.v0.1.4.bak.zip") as mock_backup, \
              patch("stream._download_release_asset") as mock_download, \
              patch("stream.load_resources", return_value=sample_resources), \
-             patch("stream._apply_auto_update_config_defaults"):
+             patch("stream._migrate_config"):
             stream.do_update()
 
         mock_backup.assert_called_once()
@@ -168,108 +168,14 @@ class TestDoUpdate:
         assert "resources.toml" in download_calls
 
     def test_do_update_calls_migration(self, sample_resources):
-        """do_update calls _apply_auto_update_config_defaults before downloading."""
+        """do_update calls _migrate_config before downloading."""
         with patch.object(stream, "__version__", "v0.1.4"), \
              patch("stream._get_latest_release_tag", return_value="v0.1.4"), \
              patch("stream.load_resources", return_value=sample_resources), \
-             patch("stream._apply_auto_update_config_defaults") as mock_migrate:
+             patch("stream._migrate_config") as mock_migrate:
             stream.do_update()
 
         mock_migrate.assert_called_once()
-
-
-# ── Auto-update config migration ────────────────────────────────────────────
-
-
-class TestApplyAutoUpdateConfigDefaults:
-    def test_no_op_when_config_missing(self, tmp_script_dir):
-        """When config.toml does not exist, the function returns without error."""
-        stream._apply_auto_update_config_defaults()
-        assert not (tmp_script_dir / "config.toml").exists()
-
-    def test_no_op_when_keys_already_present(self, tmp_script_dir, sample_config):
-        """When both autoUpdate and update are already in the config, nothing changes."""
-        sample_config["cron"]["autoUpdate"] = True
-        sample_config["cron"]["update"] = "30 3 * * *"
-        config_path = tmp_script_dir / "config.toml"
-        with open(config_path, "wb") as fh:
-            tomli_w.dump(sample_config, fh)
-
-        stream._apply_auto_update_config_defaults()
-
-        with open(config_path, "rb") as fh:
-            result = tomllib.load(fh)
-        assert result["cron"]["autoUpdate"] is True
-        assert result["cron"]["update"] == "30 3 * * *"
-
-    def test_adds_both_keys_when_missing(self, tmp_script_dir, sample_config):
-        """When neither autoUpdate nor update is present, both are added with defaults."""
-        del sample_config["cron"]["autoUpdate"]
-        del sample_config["cron"]["update"]
-        config_path = tmp_script_dir / "config.toml"
-        with open(config_path, "wb") as fh:
-            tomli_w.dump(sample_config, fh)
-
-        stream._apply_auto_update_config_defaults()
-
-        with open(config_path, "rb") as fh:
-            result = tomllib.load(fh)
-        assert result["cron"]["autoUpdate"] is False
-        assert result["cron"]["update"] == "0 0 * * *"
-
-    def test_adds_missing_auto_update_only(self, tmp_script_dir, sample_config):
-        """When only autoUpdate is missing, it is added; update is left unchanged."""
-        del sample_config["cron"]["autoUpdate"]
-        sample_config["cron"]["update"] = "15 3 * * *"
-        config_path = tmp_script_dir / "config.toml"
-        with open(config_path, "wb") as fh:
-            tomli_w.dump(sample_config, fh)
-
-        stream._apply_auto_update_config_defaults()
-
-        with open(config_path, "rb") as fh:
-            result = tomllib.load(fh)
-        assert result["cron"]["autoUpdate"] is False
-        assert result["cron"]["update"] == "15 3 * * *"
-
-    def test_adds_missing_update_schedule_only(self, tmp_script_dir, sample_config):
-        """When only update is missing, it is added; autoUpdate is left unchanged."""
-        sample_config["cron"]["autoUpdate"] = True
-        del sample_config["cron"]["update"]
-        config_path = tmp_script_dir / "config.toml"
-        with open(config_path, "wb") as fh:
-            tomli_w.dump(sample_config, fh)
-
-        stream._apply_auto_update_config_defaults()
-
-        with open(config_path, "rb") as fh:
-            result = tomllib.load(fh)
-        assert result["cron"]["autoUpdate"] is True
-        assert result["cron"]["update"] == "0 0 * * *"
-
-    def test_prints_message_when_migrating(self, tmp_script_dir, sample_config, capsys):
-        """A message is printed when new keys are written."""
-        del sample_config["cron"]["autoUpdate"]
-        del sample_config["cron"]["update"]
-        config_path = tmp_script_dir / "config.toml"
-        with open(config_path, "wb") as fh:
-            tomli_w.dump(sample_config, fh)
-
-        stream._apply_auto_update_config_defaults()
-
-        captured = capsys.readouterr()
-        assert "auto-update" in captured.out.lower()
-
-    def test_no_print_when_no_migration_needed(self, tmp_script_dir, sample_config, capsys):
-        """No message is printed when both keys are already present."""
-        config_path = tmp_script_dir / "config.toml"
-        with open(config_path, "wb") as fh:
-            tomli_w.dump(sample_config, fh)
-
-        stream._apply_auto_update_config_defaults()
-
-        captured = capsys.readouterr()
-        assert captured.out == ""
 
 
 # ── Rollback — extract version ──────────────────────────────────────────────
