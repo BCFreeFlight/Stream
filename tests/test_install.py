@@ -1,6 +1,6 @@
 """Tests for install orchestration: _setup_youtube_resources and prompt_all_config_values."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 
 import pytest
 
@@ -24,7 +24,8 @@ class TestSetupYoutubeResources:
                  return_value=("new-stream-id", "rtmp://primary", "rtmp://backup", "new-key"),
              ) as mock_create, \
              patch("stream.bind_stream_to_broadcast"), \
-             patch("stream.apply_broadcast_category"):
+             patch("stream.apply_broadcast_category"), \
+             patch("stream.apply_video_embeddable"):
             stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
 
         mock_create.assert_called_once()
@@ -43,7 +44,8 @@ class TestSetupYoutubeResources:
              patch("stream.create_stream_resource") as mock_create, \
              patch("stream.find_stream_by_key", return_value="s-id"), \
              patch("stream.bind_stream_to_broadcast"), \
-             patch("stream.apply_broadcast_category"):
+             patch("stream.apply_broadcast_category"), \
+             patch("stream.apply_video_embeddable"):
             stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
 
         mock_create.assert_not_called()
@@ -59,7 +61,8 @@ class TestSetupYoutubeResources:
                  return_value=("stream-A", "rtmp://p", "rtmp://b", "key-A"),
              ), \
              patch("stream.bind_stream_to_broadcast") as mock_bind, \
-             patch("stream.apply_broadcast_category"):
+             patch("stream.apply_broadcast_category"), \
+             patch("stream.apply_video_embeddable"):
             stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
 
         mock_bind.assert_called_once()
@@ -78,9 +81,26 @@ class TestSetupYoutubeResources:
                  side_effect=RuntimeError("API down"),
              ), \
              patch("stream.bind_stream_to_broadcast"), \
-             patch("stream.apply_broadcast_category"):
+             patch("stream.apply_broadcast_category"), \
+             patch("stream.apply_video_embeddable"):
             with pytest.raises(RuntimeError, match="API down"):
                 stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
+
+    def test_apply_video_embeddable_called_on_install(self, sample_config, sample_resources):
+        """_setup_youtube_resources calls apply_video_embeddable with the broadcast ID and embeddable flag."""
+        sample_config["youtube"]["broadcastId"] = "bcast-embed"
+        sample_config["youtube"]["streamKey"] = "sk"
+        sample_config["youtube"]["embeddable"] = True
+
+        mock_yt_service = MagicMock()
+        with patch("stream.build_youtube_service", return_value=mock_yt_service), \
+             patch("stream.find_stream_by_key", return_value="s-id"), \
+             patch("stream.bind_stream_to_broadcast"), \
+             patch("stream.apply_broadcast_category"), \
+             patch("stream.apply_video_embeddable") as mock_embed:
+            stream._setup_youtube_resources(sample_config, MagicMock(), sample_resources)
+
+        mock_embed.assert_called_once_with(mock_yt_service, "bcast-embed", True, ANY)
 
 
 # ── prompt_all_config_values ────────────────────────────────────────────────

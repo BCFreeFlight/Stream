@@ -249,6 +249,7 @@ class TestCreateFreshBroadcast:
              patch("stream.find_stream_by_key", return_value="stream-resolved") as mock_find, \
              patch("stream.bind_stream_to_broadcast") as mock_bind, \
              patch("stream.apply_broadcast_category") as mock_cat, \
+             patch("stream.apply_video_embeddable") as mock_embed, \
              patch("stream.save_config") as mock_save:
             result = stream._create_fresh_broadcast(mock_youtube, sample_config, mock_logger)
 
@@ -257,6 +258,7 @@ class TestCreateFreshBroadcast:
         mock_find.assert_called_once_with(mock_youtube, "xxxx-yyyy-zzzz", mock_logger)
         mock_bind.assert_called_once_with(mock_youtube, "new-bcast-456", "stream-resolved", mock_logger)
         mock_cat.assert_called_once_with(mock_youtube, "new-bcast-456", "22", mock_logger)
+        mock_embed.assert_called_once_with(mock_youtube, "new-bcast-456", True, mock_logger)
         mock_save.assert_called_once_with(sample_config)
 
 
