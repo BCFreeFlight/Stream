@@ -1617,6 +1617,28 @@ def _cleanup_orphaned_broadcasts_safely(config, logger):
         logger.warn(f"Orphaned broadcast cleanup failed: {exc}")
 
 
+def _complete_broadcast_if_active(youtube, broadcast_id, logger):
+    """Transition the broadcast to complete if it is in an active state."""
+    if not broadcast_id:
+        return
+    status = _api_get_broadcast_lifecycle(youtube, broadcast_id)
+    if status not in ("live", "ready", "testing", "created"):
+        return
+    _api_transition_broadcast(youtube, broadcast_id, "complete")
+    logger.info(f"Retired active broadcast {broadcast_id} (was {status})")
+
+
+def _retire_current_broadcast_safely(config, logger):
+    """Complete the current broadcast if active so --start always creates a fresh one."""
+    try:
+        creds = get_valid_credentials(config, logger)
+        youtube = build_youtube_service(creds)
+        broadcast_id = config["youtube"].get("broadcastId", "")
+        _complete_broadcast_if_active(youtube, broadcast_id, logger)
+    except Exception as exc:
+        logger.warn(f"Could not retire current broadcast: {exc}")
+
+
 def do_start():
     """Start the RTSP-to-YouTube stream with automatic retry on failure."""
     global _config
@@ -1636,6 +1658,7 @@ def do_start():
     logger.info(f"Stream process started (PID {os.getpid()})")
 
     _cleanup_orphaned_broadcasts_safely(config, logger)
+    _retire_current_broadcast_safely(config, logger)
     _run_stream_loop(config, logger, res)
     _perform_shutdown(config, logger)
 
