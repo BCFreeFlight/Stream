@@ -195,6 +195,23 @@ Enter number to restore (or 'q' to cancel):
 
 Backups are created automatically by `--update` and stored in the `backup/` directory beside the script.
 
+### Set a config property
+
+```bash
+python3 stream.py --set-property cron.autoUpdate true
+python3 stream.py --set-property youtube.privacy private --set-property logRetentionDays 30
+```
+
+Sets one or more `config.toml` values directly from the command line without opening the file. Keys use dot-notation to address nested sections (`section.key`). The flag can be repeated to set multiple properties in a single invocation.
+
+Values are automatically coerced to the correct type (boolean, integer, or string) based on the config schema. Unknown keys are rejected with an error to prevent typos from silently corrupting configuration.
+
+| Type | Accepted values |
+|------|----------------|
+| boolean | `true`, `false`, `yes`, `no`, `1`, `0` (case-insensitive) |
+| integer | Any whole number string |
+| string | Any value, passed through as-is |
+
 ## Crontab
 
 `--install` registers three cron entries by default (default: April through October), and optionally a fourth:

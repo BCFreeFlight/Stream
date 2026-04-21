@@ -389,3 +389,89 @@ class TestMigrateConfig:
         result = stream.load_config()
         assert result["cron"]["autoUpdate"] is False
         assert result["cron"]["update"] == "0 0 * * *"
+
+
+# ── _coerce_config_value ─────────────────────────────────────────────────────
+
+
+class TestCoerceConfigValue:
+    def test_bool_true_variants(self):
+        """'true', '1', 'yes' (any case) all coerce to True."""
+        for val in ("true", "True", "TRUE", "1", "yes", "Yes"):
+            assert stream._coerce_config_value(val, True) is True
+
+    def test_bool_false_variants(self):
+        """'false', '0', 'no' (any case) all coerce to False."""
+        for val in ("false", "False", "FALSE", "0", "no", "No"):
+            assert stream._coerce_config_value(val, False) is False
+
+    def test_bool_invalid_raises(self):
+        """An unrecognised string raises ValueError for a bool target."""
+        import pytest
+        with pytest.raises(ValueError, match="boolean"):
+            stream._coerce_config_value("banana", True)
+
+    def test_int_valid(self):
+        """A numeric string coerces to int when the target is int."""
+        assert stream._coerce_config_value("30", 15) == 30
+        assert isinstance(stream._coerce_config_value("30", 15), int)
+
+    def test_int_invalid_raises(self):
+        """A non-numeric string raises ValueError for an int target."""
+        import pytest
+        with pytest.raises(ValueError):
+            stream._coerce_config_value("abc", 5)
+
+    def test_str_passthrough(self):
+        """String values are returned unchanged regardless of content."""
+        assert stream._coerce_config_value("private", "public") == "private"
+        assert stream._coerce_config_value("  padded  ", "") == "  padded  "
+
+
+# ── _set_config_property ─────────────────────────────────────────────────────
+
+
+class TestSetConfigProperty:
+    def test_sets_top_level_key(self, sample_config):
+        """A top-level string key is updated in the config dict."""
+        stream._set_config_property(sample_config, "logDir", "./custom-logs")
+        assert sample_config["logDir"] == "./custom-logs"
+
+    def test_sets_nested_key(self, sample_config):
+        """A dot-notation key navigates into a nested section."""
+        stream._set_config_property(sample_config, "cron.autoUpdate", "true")
+        assert sample_config["cron"]["autoUpdate"] is True
+
+    def test_sets_int_key(self, sample_config):
+        """An int-typed key is coerced from string to int."""
+        returned = stream._set_config_property(sample_config, "logRetentionDays", "30")
+        assert sample_config["logRetentionDays"] == 30
+        assert returned == 30
+
+    def test_sets_bool_key(self, sample_config):
+        """A bool-typed key is coerced from string to bool."""
+        stream._set_config_property(sample_config, "stream.mute", "true")
+        assert sample_config["stream"]["mute"] is True
+
+    def test_creates_missing_nested_key(self, sample_config):
+        """A key absent from config.toml but present in CONFIG_DEFAULTS is accepted."""
+        del sample_config["cron"]["autoUpdate"]
+        stream._set_config_property(sample_config, "cron.autoUpdate", "true")
+        assert sample_config["cron"]["autoUpdate"] is True
+
+    def test_unknown_key_raises(self, sample_config):
+        """A key not in CONFIG_DEFAULTS raises ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="Unknown config key"):
+            stream._set_config_property(sample_config, "foo.bar", "baz")
+
+    def test_section_path_raises(self, sample_config):
+        """Providing a section name (not a leaf) raises ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="section"):
+            stream._set_config_property(sample_config, "cron", "something")
+
+    def test_returns_coerced_value(self, sample_config):
+        """The function returns the coerced value."""
+        result = stream._set_config_property(sample_config, "youtube.privacy", "unlisted")
+        assert result == "unlisted"

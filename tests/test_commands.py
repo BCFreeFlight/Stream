@@ -305,3 +305,91 @@ class TestDoStartOrchestration:
              patch("stream.load_resources", return_value=sample_resources):
             with pytest.raises(RuntimeError, match="broadcastId"):
                 stream.do_start()
+
+
+# ── do_set_property ─────────────────────────────────────────────────────────
+
+
+class TestDoSetProperty:
+    def test_sets_single_property(self, config_on_disk, capsys):
+        """A single property is written to config.toml and confirmed."""
+        stream.do_set_property([["youtube.privacy", "unlisted"]])
+
+        result = stream.load_config()
+        assert result["youtube"]["privacy"] == "unlisted"
+        out = capsys.readouterr().out
+        assert "youtube.privacy" in out
+        assert "Config saved" in out
+
+    def test_sets_multiple_properties(self, config_on_disk):
+        """Multiple properties are all written in one call."""
+        stream.do_set_property([
+            ["youtube.privacy", "private"],
+            ["cron.autoUpdate", "true"],
+            ["logRetentionDays", "30"],
+        ])
+
+        result = stream.load_config()
+        assert result["youtube"]["privacy"] == "private"
+        assert result["cron"]["autoUpdate"] is True
+        assert result["logRetentionDays"] == 30
+
+    def test_coerces_bool(self, config_on_disk):
+        """String 'true'/'false' are coerced to native bool."""
+        stream.do_set_property([["stream.mute", "true"]])
+        assert stream.load_config()["stream"]["mute"] is True
+
+        stream.do_set_property([["stream.mute", "false"]])
+        assert stream.load_config()["stream"]["mute"] is False
+
+    def test_coerces_int(self, config_on_disk):
+        """String integer is coerced to int."""
+        stream.do_set_property([["retryDelaySecs", "10"]])
+        result = stream.load_config()
+        assert result["retryDelaySecs"] == 10
+        assert isinstance(result["retryDelaySecs"], int)
+
+    def test_sets_key_missing_from_config_but_in_schema(self, tmp_script_dir, sample_config):
+        """A key absent from config.toml but present in CONFIG_DEFAULTS is accepted."""
+        del sample_config["cron"]["autoUpdate"]
+        import tomli_w
+        with open(tmp_script_dir / "config.toml", "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream.do_set_property([["cron.autoUpdate", "true"]])
+        assert stream.load_config()["cron"]["autoUpdate"] is True
+
+    def test_unknown_key_raises(self, config_on_disk):
+        """Unknown dot-notation key raises ValueError without touching config."""
+        with pytest.raises(ValueError, match="Unknown config key"):
+            stream.do_set_property([["totally.unknown", "val"]])
+
+    def test_section_path_raises(self, config_on_disk):
+        """Providing a section name raises ValueError."""
+        with pytest.raises(ValueError, match="section"):
+            stream.do_set_property([["youtube", "something"]])
+
+    def test_invalid_bool_raises(self, config_on_disk):
+        """An invalid value for a bool key raises ValueError."""
+        with pytest.raises(ValueError, match="boolean"):
+            stream.do_set_property([["cron.autoUpdate", "banana"]])
+
+    def test_dispatch_single(self):
+        """main() routes --set-property key val to do_set_property."""
+        with patch("sys.argv", ["stream.py", "--set-property", "youtube.privacy", "private"]), \
+             patch("stream.do_set_property") as mock_set:
+            stream.main()
+        mock_set.assert_called_once_with([["youtube.privacy", "private"]])
+
+    def test_dispatch_multiple(self):
+        """main() collects repeated --set-property into a list of pairs."""
+        with patch("sys.argv", [
+            "stream.py",
+            "--set-property", "youtube.privacy", "private",
+            "--set-property", "cron.autoUpdate", "true",
+        ]), patch("stream.do_set_property") as mock_set:
+            stream.main()
+        mock_set.assert_called_once_with([
+            ["youtube.privacy", "private"],
+            ["cron.autoUpdate", "true"],
+        ])

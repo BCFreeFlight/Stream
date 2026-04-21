@@ -207,6 +207,44 @@ def _deep_merge_defaults(defaults, config):
     return merged
 
 
+def _coerce_config_value(value_str, target):
+    """Coerce a CLI string to the same native type as target from CONFIG_DEFAULTS."""
+    if isinstance(target, bool):
+        if value_str.lower() in ("true", "1", "yes"):
+            return True
+        if value_str.lower() in ("false", "0", "no"):
+            return False
+        raise ValueError(f"Expected boolean (true/false/yes/no/1/0), got: {value_str!r}")
+    if isinstance(target, int):
+        return int(value_str)
+    return value_str
+
+
+def _set_config_property(config, key_path, value_str):
+    """Set a dot-notation config key to the coerced value.
+
+    Validates the key against CONFIG_DEFAULTS (the schema in stream.py), not
+    against the existing config.toml — so keys added in a newer version of the
+    script can be written even if they are absent from an older config file.
+
+    Raises ValueError for unknown keys, section paths, or invalid values.
+    """
+    parts = key_path.split(".")
+    defaults_node = CONFIG_DEFAULTS
+    for part in parts:
+        if not isinstance(defaults_node, dict) or part not in defaults_node:
+            raise ValueError(f"Unknown config key: {key_path!r}")
+        defaults_node = defaults_node[part]
+    if isinstance(defaults_node, dict):
+        raise ValueError(f"{key_path!r} is a section, not a settable value")
+    coerced = _coerce_config_value(value_str, defaults_node)
+    node = config
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+    node[parts[-1]] = coerced
+    return coerced
+
+
 def _migrate_config():
     """Fill any missing config keys with schema defaults and persist if changed."""
     config_path = SCRIPT_DIR / "config.toml"
@@ -2168,6 +2206,19 @@ def do_rollback(version=None):
         version=restored_version))
 
 
+# ── --set-property Command ───────────────────────────────────────────────────
+
+
+def do_set_property(pairs):
+    """Set one or more config.toml properties from the command line."""
+    config = load_config()
+    for key_path, value_str in pairs:
+        coerced = _set_config_property(config, key_path, value_str)
+        print(f"  {key_path} = {coerced!r}")
+    save_config(config)
+    print("Config saved.")
+
+
 # ── Entry Point ──────────────────────────────────────────────────────────────
 
 
@@ -2187,6 +2238,9 @@ def main():
     group.add_argument("--update", action="store_true", help="Update to the latest release")
     group.add_argument("--roll-back", nargs="?", const="__prompt__", metavar="VERSION",
                        help="Roll back to a previous version (interactive if no version given)")
+    group.add_argument("--set-property", nargs=2, metavar=("KEY", "VALUE"), action="append",
+                       dest="set_property",
+                       help="Set a config.toml property by dot-notation key. Can be repeated.")
     args = parser.parse_args()
 
     if args.install:
@@ -2206,6 +2260,8 @@ def main():
     elif args.roll_back:
         version = None if args.roll_back == "__prompt__" else args.roll_back
         do_rollback(version)
+    elif args.set_property:
+        do_set_property(args.set_property)
 
 
 if __name__ == "__main__":
