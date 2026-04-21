@@ -6,7 +6,7 @@ This file describes the project structure, conventions, and rules for AI-assiste
 
 ## Project Overview
 
-This repository contains a single Python script (`src/stream.py`) that proxies an RTSP camera stream to YouTube Live via ffmpeg. It reuses a **persistent** YouTube broadcast (stable URL for embedding), handles authentication via Google OAuth 2.0, retries automatically on failure, and self-registers as a daily cron job.
+This repository contains a single Python script (`src/stream.py`) that proxies an RTSP camera stream to YouTube Live via ffmpeg. It creates a fresh YouTube broadcast on every `--start` (retiring the previous one), uses a **stable channel embed URL** that always resolves to the current live broadcast, handles authentication via Google OAuth 2.0, retries automatically on failure, and self-registers as a daily cron job.
 
 ---
 
@@ -123,6 +123,7 @@ backupStreamUrl = ""
 streamKey = ""
 
 [cron]
+enabled = true # if false, cron jobs are not registered during --install
 start = "30 6 1-31 4-10 *"
 stop = "25 18 1-31 4-10 *"
 autoUpdate = false # default to false to avoid breaking changes without user consent
@@ -152,11 +153,11 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 
 | Switch | Behavior |
 |--------|----------|
-| `--install` | Interactive setup: prompts for config, writes files, installs deps, runs OAuth, creates YouTube resources, registers cron |
+| `--install` | Idempotent setup: loads existing config and only prompts for values that are empty or missing. Installs deps, runs OAuth if needed, creates YouTube resources if not already configured, and registers cron entries without duplicating them. |
 | `--uninstall` | Stops any running stream, archives the broadcast, and removes all cron entries (start/stop/@reboot recover). `config.toml` and `.env` are **preserved** so the user can re-install later without re-entering credentials. |
 | `--reinstall` | Destructive clean-slate setup. Prompts for `yes` confirmation, then chains `--uninstall` → delete `config.toml` + `.env` → `--install`. `logs/` and `backup/` are preserved. |
-| `--start` | Resumes streaming to the existing YouTube broadcast. Runs in the foreground, blocking the terminal. |
-| `--stop` | Writes the stop sentinel, signals the running process, waits for graceful shutdown. The broadcast is **not** completed — it stays alive for reuse. |
+| `--start` | Retires any active broadcast, creates a fresh one, and starts streaming. Runs in the foreground, blocking the terminal. |
+| `--stop` | Writes the stop sentinel, signals the running process, waits for graceful shutdown, and transitions the broadcast to `complete` so it is archived as a VOD. |
 | `--recover` | Crash-recovery. If the current time falls inside the daily `cron.start`/`cron.stop` window (and no stream is already running), delegates to `--start`. Otherwise exits cleanly. Registered as an `@reboot` cron entry by `--install`. |
 | `--update` | Backs up current files to a versioned zip in `backup/`, downloads the latest release from GitHub, and replaces `stream.py` and `resources.toml`. |
 | `--roll-back [VERSION]` | Restores `stream.py` and `resources.toml` from a backup. Without a version, lists available backups interactively. |
@@ -217,13 +218,16 @@ The stream resource (RTMP URL and stream key) is created **once** during `--inst
 
 ### During `--start`:
 1. Read `broadcastId`, `streamURL`, `streamKey` from config
-2. Clean up orphaned broadcasts — query `liveBroadcasts.list` for any broadcasts in `live`, `ready`, `testing`, or `created` state and transition them to `complete`
-3. Retire the current broadcast — if the configured broadcast is in any active state, transition it to `complete`
-4. Create a new broadcast, bind the existing stream, and update `config.toml`
-5. Update the broadcast title with today's date via `liveBroadcasts.update`
-6. Launch ffmpeg pointing at the RTMP URL
-7. Wait for stream to become active
-8. `liveBroadcasts.transition` → `testing` → `live`
+2. Clean up orphaned broadcasts — query `liveBroadcasts.list`; transition `live`/`testing` to `complete`, delete `created`/`ready`
+3. Retire the current broadcast — if the configured broadcast is in any active state (`live`, `testing`, `ready`, `created`), transition it to `complete`
+4. Update the broadcast title with today's date via `liveBroadcasts.update` (first attempt only)
+5. Launch ffmpeg pointing at the RTMP URL
+6. Wait for stream to become active
+7. Ensure broadcast is live — check the current lifecycle state:
+   - `complete`: create a new broadcast, bind the existing stream, update `broadcastId` in `config.toml`, then transition to `live`
+   - `ready` or `created`: transition `ready` → `testing` → `live`
+   - `testing`: transition directly to `live`
+   - `live`: no-op
 
 ### During `--stop`:
 1. Stop the ffmpeg process
@@ -291,7 +295,7 @@ The start cron opens a single terminal window. When the stop cron fires, the str
 
 `--install` must not create duplicate crontab entries if run more than once.
 
-When `--update` is run on an existing install that lacks the `autoUpdate`/`update` keys, those keys are written to `config.toml` with their defaults (no prompt, no cron registration).
+When `--start` or `--update` is run, `_migrate_config()` deep-merges `CONFIG_DEFAULTS` against the existing `config.toml` and writes back any keys that are absent. This is the general migration mechanism — adding a new config key to `CONFIG_DEFAULTS` is sufficient to backfill it on all existing installs without a separate migration function.
 
 ---
 
@@ -308,8 +312,9 @@ The release workflow lives at `.github/workflows/release.yml`.
 - Starts at `v1.0.0` if no releases exist
 - Version is always determined dynamically — never hardcoded
 
-**Release artifact:**
-- `src/stream.py` only, attached as `stream.py` (no path prefix)
+**Release artifacts:**
+- `src/stream.py` attached as `stream.py` (no path prefix)
+- `src/resources.toml` attached as `resources.toml` (no path prefix)
 - Changelog body: commits since the previous tag, or "Initial release"
 - Uses `GITHUB_TOKEN` exclusively — no additional secrets
 
