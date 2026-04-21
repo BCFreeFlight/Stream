@@ -148,6 +148,7 @@ CONFIG_COMMENTS = {
     "privacy": "# Broadcast privacy: public, unlisted, or private",
     "categoryId": '# YouTube category ID (22 = "People & Blogs")',
     "enableMonitorStream": "# Enable the YouTube monitor stream",
+    "embeddable": "# Allow the broadcast to be embedded on external websites",
     "broadcastId": "# Persistent broadcast ID — created by --install, reused by --start",
     "streamId": "# YouTube stream resource ID",
     "streamURL": "# Primary RTMP ingest URL",
@@ -375,7 +376,7 @@ def build_youtube_service(creds):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _api_insert_broadcast(youtube, title, privacy, enable_monitor):
+def _api_insert_broadcast(youtube, title, privacy, enable_monitor, embeddable):
     """Call liveBroadcasts.insert and return the API response."""
     body = {
         "snippet": {
@@ -387,6 +388,7 @@ def _api_insert_broadcast(youtube, title, privacy, enable_monitor):
         "status": {
             "privacyStatus": privacy,
             "selfDeclaredMadeForKids": False,
+            "embeddable": embeddable,
         },
         "contentDetails": {
             "monitorStream": {
@@ -514,9 +516,10 @@ def create_broadcast(youtube, config, logger):
     title = interpolate_broadcast_title(config)
     privacy = config["youtube"]["privacy"]
     enable_monitor = config["youtube"]["enableMonitorStream"]
+    embeddable = config["youtube"]["embeddable"]
 
-    logger.info(f'Creating broadcast: title="{title}", privacy={privacy}')
-    resp = _api_insert_broadcast(youtube, title, privacy, enable_monitor)
+    logger.info(f'Creating broadcast: title="{title}", privacy={privacy}, embeddable={embeddable}')
+    resp = _api_insert_broadcast(youtube, title, privacy, enable_monitor, embeddable)
     broadcast_id = resp["id"]
     logger.info(f"Broadcast created: {broadcast_id}")
     logger.info(f"Stable stream URL: https://youtube.com/live/{broadcast_id}")
@@ -1261,6 +1264,7 @@ def prompt_all_config_values(res, existing=None):
             "enableMonitorStream": _get_nested(
                 ex, "youtube", "enableMonitorStream", default=False
             ),
+            "embeddable": _get_nested(ex, "youtube", "embeddable", default=True),
             "broadcastId": broadcast_id,
             "streamId": _get_nested(ex, "youtube", "streamId"),
             "streamURL": _get_nested(ex, "youtube", "streamURL"),
