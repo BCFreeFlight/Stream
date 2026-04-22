@@ -293,31 +293,66 @@ class TestHighLevelOrchestration:
 
     # -- apply_video_embeddable ----------------------------------------------
 
+    @patch("stream.time.sleep")
     @patch("stream._api_update_video_status")
-    def test_apply_video_embeddable_true(self, mock_update, mock_logger):
-        """Sets embeddable=True on the video status."""
+    @patch("stream._api_get_video_status")
+    def test_apply_video_embeddable_true(self, mock_get, mock_update, mock_sleep, mock_logger):
+        """Sets embeddable=True on the video status when the resource is immediately available."""
+        mock_get.return_value = {"embeddable": False, "privacyStatus": "public"}
         yt = MagicMock()
         stream.apply_video_embeddable(yt, "bid", True, mock_logger)
-        mock_update.assert_called_once_with(yt, "bid", {"embeddable": True})
+        mock_update.assert_called_once_with(yt, "bid", {"embeddable": True, "privacyStatus": "public"})
         mock_logger.debug.assert_called_once()
 
+    @patch("stream.time.sleep")
     @patch("stream._api_update_video_status")
-    def test_apply_video_embeddable_false(self, mock_update, mock_logger):
+    @patch("stream._api_get_video_status")
+    def test_apply_video_embeddable_false(self, mock_get, mock_update, mock_sleep, mock_logger):
         """Sets embeddable=False on the video status."""
+        mock_get.return_value = {"embeddable": True, "privacyStatus": "public"}
         yt = MagicMock()
         stream.apply_video_embeddable(yt, "bid", False, mock_logger)
-        mock_update.assert_called_once_with(yt, "bid", {"embeddable": False})
+        mock_update.assert_called_once_with(yt, "bid", {"embeddable": False, "privacyStatus": "public"})
 
+    @patch("stream.time.sleep")
     @patch("stream._api_update_video_status")
-    def test_apply_video_embeddable_http_error(self, mock_update, mock_logger):
+    @patch("stream._api_get_video_status")
+    def test_apply_video_embeddable_http_error(self, mock_get, mock_update, mock_sleep, mock_logger):
         """HttpError is caught and logged as a warning, no exception raised."""
         from googleapiclient.errors import HttpError
 
+        mock_get.return_value = {"embeddable": True}
         mock_update.side_effect = HttpError(
             resp=MagicMock(status=403), content=b"forbidden"
         )
         stream.apply_video_embeddable(MagicMock(), "bid", True, mock_logger)
         mock_logger.warn.assert_called_once()
+
+    @patch("stream.time.sleep")
+    @patch("stream._api_update_video_status")
+    @patch("stream._api_get_video_status")
+    def test_apply_video_embeddable_video_not_ready_warns(
+        self, mock_get, mock_update, mock_sleep, mock_logger
+    ):
+        """Logs a warning and skips the update when the video resource never becomes available."""
+        mock_get.return_value = None
+        stream.apply_video_embeddable(MagicMock(), "bid", True, mock_logger)
+        mock_update.assert_not_called()
+        mock_logger.warn.assert_called_once()
+
+    @patch("stream.time.sleep")
+    @patch("stream._api_update_video_status")
+    @patch("stream._api_get_video_status")
+    def test_apply_video_embeddable_retries_until_ready(
+        self, mock_get, mock_update, mock_sleep, mock_logger
+    ):
+        """Polls until the video resource exists, then applies the embeddable flag."""
+        mock_get.side_effect = [None, None, {"embeddable": False}]
+        yt = MagicMock()
+        stream.apply_video_embeddable(yt, "bid", True, mock_logger)
+        assert mock_get.call_count == 3
+        mock_update.assert_called_once()
+        assert mock_sleep.call_count == 2
 
     # -- find_stream_resource_by_key -----------------------------------------
 

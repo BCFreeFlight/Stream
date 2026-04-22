@@ -96,7 +96,7 @@ import tomli_w
 try:
     import tomllib
 except ModuleNotFoundError:
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 # ── Constants & Types ────────────────────────────────────────────────────────
 
@@ -643,6 +643,13 @@ def _api_get_video_snippet(youtube, video_id):
     return items[0]["snippet"] if items else None
 
 
+def _api_get_video_status(youtube, video_id):
+    """Call videos.list and return the status dict, or None."""
+    resp = youtube.videos().list(part="status", id=video_id).execute()
+    items = resp.get("items", [])
+    return items[0]["status"] if items else None
+
+
 # ── YouTube API — High-Level Orchestration ───────────────────────────────────
 #
 # These compose the low-level wrappers with logging, polling, and error
@@ -715,9 +722,22 @@ def apply_video_embeddable(youtube, broadcast_id, embeddable, logger):
     underlying video resource has its own separate embeddable flag. Both must
     be true for embedding to work on all clients (mobile browsers enforce the
     video-level flag strictly).
+
+    YouTube creates the video resource asynchronously after broadcast creation,
+    so this polls until it exists before attempting the update.
     """
+    for _ in range(10):
+        status = _api_get_video_status(youtube, broadcast_id)
+        if status is not None:
+            break
+        time.sleep(2)
+    else:
+        logger.warn(f"Video resource for broadcast {broadcast_id} not available — embeddable flag not set")
+        return
+
     try:
-        _api_update_video_status(youtube, broadcast_id, {"embeddable": embeddable})
+        status["embeddable"] = embeddable
+        _api_update_video_status(youtube, broadcast_id, status)
         logger.debug(f"Video embeddable set to {embeddable}")
     except HttpError as exc:
         logger.warn(f"Could not set video embeddable: {exc}")
