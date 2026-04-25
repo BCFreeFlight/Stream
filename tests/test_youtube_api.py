@@ -34,16 +34,18 @@ class TestLowLevelAPI:
         assert body["contentDetails"]["enableAutoStop"] is False
 
     def test_api_insert_broadcast_embeddable_true(self, mock_youtube):
-        """embeddable=True is set in the status body."""
+        """embeddable=True is set in contentDetails.enableEmbed, not status."""
         stream._api_insert_broadcast(mock_youtube, "T", "public", False, True)
         _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
-        assert kwargs["body"]["status"]["embeddable"] is True
+        assert kwargs["body"]["contentDetails"]["enableEmbed"] is True
+        assert "embeddable" not in kwargs["body"]["status"]
 
     def test_api_insert_broadcast_embeddable_false(self, mock_youtube):
-        """embeddable=False is set in the status body."""
+        """embeddable=False is set in contentDetails.enableEmbed, not status."""
         stream._api_insert_broadcast(mock_youtube, "T", "public", False, False)
         _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
-        assert kwargs["body"]["status"]["embeddable"] is False
+        assert kwargs["body"]["contentDetails"]["enableEmbed"] is False
+        assert "embeddable" not in kwargs["body"]["status"]
 
     # -- _api_insert_stream --------------------------------------------------
 

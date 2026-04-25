@@ -519,7 +519,6 @@ def _api_insert_broadcast(youtube, title, privacy, enable_monitor, embeddable):
         "status": {
             "privacyStatus": privacy,
             "selfDeclaredMadeForKids": False,
-            "embeddable": embeddable,
         },
         "contentDetails": {
             "monitorStream": {
@@ -527,6 +526,7 @@ def _api_insert_broadcast(youtube, title, privacy, enable_monitor, embeddable):
             },
             "enableAutoStart": False,
             "enableAutoStop": False,
+            "enableEmbed": embeddable,
         },
     }
     return (
