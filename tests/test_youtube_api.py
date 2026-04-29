@@ -195,7 +195,8 @@ class TestHighLevelOrchestration:
         mock_insert.return_value = {"id": "bcast-2"}
         yt = MagicMock()
         stream.create_broadcast(yt, sample_config, mock_logger)
-        mock_embed.assert_called_once_with(yt, "bcast-2", True, mock_logger)
+        enable_monitor = sample_config["youtube"]["enableMonitorStream"]
+        mock_embed.assert_called_once_with(yt, "bcast-2", True, enable_monitor, mock_logger)
 
     @patch("stream.apply_broadcast_embeddable")
     @patch("stream._api_insert_broadcast")
@@ -207,7 +208,8 @@ class TestHighLevelOrchestration:
         mock_insert.return_value = {"id": "bcast-3"}
         yt = MagicMock()
         stream.create_broadcast(yt, sample_config, mock_logger)
-        mock_embed.assert_called_once_with(yt, "bcast-3", False, mock_logger)
+        enable_monitor = sample_config["youtube"]["enableMonitorStream"]
+        mock_embed.assert_called_once_with(yt, "bcast-3", False, enable_monitor, mock_logger)
 
     # -- create_stream_resource ----------------------------------------------
 
@@ -312,18 +314,26 @@ class TestHighLevelOrchestration:
 
     @patch("stream._api_update_broadcast_content_details")
     def test_apply_broadcast_embeddable_true(self, mock_update, mock_logger):
-        """Sets enableEmbed=True on the broadcast via contentDetails update."""
+        """Sets enableEmbed=True and includes enableMonitorStream in the update body."""
         yt = MagicMock()
-        stream.apply_broadcast_embeddable(yt, "bid", True, mock_logger)
-        mock_update.assert_called_once_with(yt, "bid", {"enableEmbed": True})
+        stream.apply_broadcast_embeddable(yt, "bid", True, False, mock_logger)
+        mock_update.assert_called_once_with(
+            yt,
+            "bid",
+            {"enableEmbed": True, "monitorStream": {"enableMonitorStream": False}},
+        )
         mock_logger.debug.assert_called_once()
 
     @patch("stream._api_update_broadcast_content_details")
     def test_apply_broadcast_embeddable_false(self, mock_update, mock_logger):
         """Sets enableEmbed=False on the broadcast."""
         yt = MagicMock()
-        stream.apply_broadcast_embeddable(yt, "bid", False, mock_logger)
-        mock_update.assert_called_once_with(yt, "bid", {"enableEmbed": False})
+        stream.apply_broadcast_embeddable(yt, "bid", False, False, mock_logger)
+        mock_update.assert_called_once_with(
+            yt,
+            "bid",
+            {"enableEmbed": False, "monitorStream": {"enableMonitorStream": False}},
+        )
 
     @patch("stream._api_update_broadcast_content_details")
     def test_apply_broadcast_embeddable_http_error_warns(self, mock_update, mock_logger):
@@ -333,7 +343,7 @@ class TestHighLevelOrchestration:
         mock_update.side_effect = HttpError(
             resp=MagicMock(status=400), content=b"invalidEmbedSetting"
         )
-        stream.apply_broadcast_embeddable(MagicMock(), "bid", True, mock_logger)
+        stream.apply_broadcast_embeddable(MagicMock(), "bid", True, False, mock_logger)
         mock_logger.warn.assert_called_once()
 
     # -- apply_video_embeddable ----------------------------------------------
