@@ -187,23 +187,25 @@ class TestHighLevelOrchestration:
 
     @patch("stream.apply_broadcast_embeddable")
     @patch("stream._api_insert_broadcast")
-    def test_create_broadcast_calls_apply_broadcast_embeddable_true(
+    def test_create_broadcast_skips_apply_when_embeddable_true(
         self, mock_insert, mock_embed, sample_config, mock_logger
     ):
-        """create_broadcast calls apply_broadcast_embeddable with embeddable=True from config."""
+        """create_broadcast skips apply_broadcast_embeddable when embeddable=True.
+
+        The YouTube insert API defaults enableEmbed to True, so no update call
+        is needed — and it would fail without channel verification anyway.
+        """
         sample_config["youtube"]["embeddable"] = True
         mock_insert.return_value = {"id": "bcast-2"}
-        yt = MagicMock()
-        stream.create_broadcast(yt, sample_config, mock_logger)
-        enable_monitor = sample_config["youtube"]["enableMonitorStream"]
-        mock_embed.assert_called_once_with(yt, "bcast-2", True, enable_monitor, mock_logger)
+        stream.create_broadcast(MagicMock(), sample_config, mock_logger)
+        mock_embed.assert_not_called()
 
     @patch("stream.apply_broadcast_embeddable")
     @patch("stream._api_insert_broadcast")
-    def test_create_broadcast_calls_apply_broadcast_embeddable_false(
+    def test_create_broadcast_calls_apply_when_embeddable_false(
         self, mock_insert, mock_embed, sample_config, mock_logger
     ):
-        """create_broadcast calls apply_broadcast_embeddable with embeddable=False from config."""
+        """create_broadcast calls apply_broadcast_embeddable to disable embedding when embeddable=False."""
         sample_config["youtube"]["embeddable"] = False
         mock_insert.return_value = {"id": "bcast-3"}
         yt = MagicMock()

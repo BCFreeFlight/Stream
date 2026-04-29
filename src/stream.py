@@ -686,7 +686,8 @@ def create_broadcast(youtube, config, logger):
     broadcast_id = resp["id"]
     logger.info(f"Broadcast created: {broadcast_id}")
     logger.info(f"Stable stream URL: https://youtube.com/live/{broadcast_id}")
-    apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, logger)
+    if not embeddable:
+        apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, logger)
     return broadcast_id
 
 
