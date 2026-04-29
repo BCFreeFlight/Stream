@@ -18,13 +18,13 @@ class TestLowLevelAPI:
 
     def test_api_insert_broadcast_calls_execute(self, mock_youtube):
         """insert_broadcast chains liveBroadcasts().insert().execute()."""
-        stream._api_insert_broadcast(mock_youtube, "title", "public", False, True)
+        stream._api_insert_broadcast(mock_youtube, "title", "public", False)
         mock_youtube.liveBroadcasts().insert.assert_called_once()
         mock_youtube.liveBroadcasts().insert().execute.assert_called_once()
 
     def test_api_insert_broadcast_body_structure(self, mock_youtube):
         """The body kwarg contains the expected snippet, status, and contentDetails."""
-        stream._api_insert_broadcast(mock_youtube, "My Title", "unlisted", False, True)
+        stream._api_insert_broadcast(mock_youtube, "My Title", "unlisted", False)
         _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
         body = kwargs["body"]
 
@@ -33,19 +33,12 @@ class TestLowLevelAPI:
         assert body["contentDetails"]["enableAutoStart"] is False
         assert body["contentDetails"]["enableAutoStop"] is False
 
-    def test_api_insert_broadcast_embeddable_true(self, mock_youtube):
-        """embeddable=True is set in contentDetails.enableEmbed, not status."""
-        stream._api_insert_broadcast(mock_youtube, "T", "public", False, True)
+    def test_api_insert_broadcast_does_not_set_enable_embed(self, mock_youtube):
+        """enableEmbed is not set during insert — it is applied via update after creation."""
+        stream._api_insert_broadcast(mock_youtube, "T", "public", False)
         _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
-        assert kwargs["body"]["contentDetails"]["enableEmbed"] is True
-        assert "embeddable" not in kwargs["body"]["status"]
-
-    def test_api_insert_broadcast_embeddable_false(self, mock_youtube):
-        """embeddable=False is set in contentDetails.enableEmbed, not status."""
-        stream._api_insert_broadcast(mock_youtube, "T", "public", False, False)
-        _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
-        assert kwargs["body"]["contentDetails"]["enableEmbed"] is False
-        assert "embeddable" not in kwargs["body"]["status"]
+        assert "enableEmbed" not in kwargs["body"]["contentDetails"]
+        assert "embeddable" not in kwargs["body"].get("status", {})
 
     # -- _api_insert_stream --------------------------------------------------
 
@@ -184,28 +177,37 @@ class TestHighLevelOrchestration:
 
     # -- create_broadcast ----------------------------------------------------
 
+    @patch("stream.apply_broadcast_embeddable")
     @patch("stream._api_insert_broadcast")
-    def test_create_broadcast_returns_id(self, mock_insert, sample_config, mock_logger):
+    def test_create_broadcast_returns_id(self, mock_insert, mock_embed, sample_config, mock_logger):
         """create_broadcast returns the broadcast ID from the API response."""
         mock_insert.return_value = {"id": "bcast-1"}
         result = stream.create_broadcast(MagicMock(), sample_config, mock_logger)
         assert result == "bcast-1"
 
+    @patch("stream.apply_broadcast_embeddable")
     @patch("stream._api_insert_broadcast")
-    def test_create_broadcast_passes_embeddable_true(self, mock_insert, sample_config, mock_logger):
-        """create_broadcast forwards embeddable=True from config to the API call."""
+    def test_create_broadcast_calls_apply_broadcast_embeddable_true(
+        self, mock_insert, mock_embed, sample_config, mock_logger
+    ):
+        """create_broadcast calls apply_broadcast_embeddable with embeddable=True from config."""
         sample_config["youtube"]["embeddable"] = True
         mock_insert.return_value = {"id": "bcast-2"}
-        stream.create_broadcast(MagicMock(), sample_config, mock_logger)
-        assert mock_insert.call_args[0][4] is True
+        yt = MagicMock()
+        stream.create_broadcast(yt, sample_config, mock_logger)
+        mock_embed.assert_called_once_with(yt, "bcast-2", True, mock_logger)
 
+    @patch("stream.apply_broadcast_embeddable")
     @patch("stream._api_insert_broadcast")
-    def test_create_broadcast_passes_embeddable_false(self, mock_insert, sample_config, mock_logger):
-        """create_broadcast forwards embeddable=False from config to the API call."""
+    def test_create_broadcast_calls_apply_broadcast_embeddable_false(
+        self, mock_insert, mock_embed, sample_config, mock_logger
+    ):
+        """create_broadcast calls apply_broadcast_embeddable with embeddable=False from config."""
         sample_config["youtube"]["embeddable"] = False
         mock_insert.return_value = {"id": "bcast-3"}
-        stream.create_broadcast(MagicMock(), sample_config, mock_logger)
-        assert mock_insert.call_args[0][4] is False
+        yt = MagicMock()
+        stream.create_broadcast(yt, sample_config, mock_logger)
+        mock_embed.assert_called_once_with(yt, "bcast-3", False, mock_logger)
 
     # -- create_stream_resource ----------------------------------------------
 
@@ -282,6 +284,19 @@ class TestHighLevelOrchestration:
         stream.apply_broadcast_category(MagicMock(), "bid", "22", mock_logger)
         mock_logger.warn.assert_called_once()
 
+    # -- _api_update_broadcast_content_details --------------------------------
+
+    def test_api_update_broadcast_content_details_calls_update(self, mock_youtube):
+        """Calls liveBroadcasts().update() with part=contentDetails and correct body."""
+        stream._api_update_broadcast_content_details(
+            mock_youtube, "bid-1", {"enableEmbed": True}
+        )
+        mock_youtube.liveBroadcasts().update.assert_called_once()
+        _, kwargs = mock_youtube.liveBroadcasts().update.call_args
+        assert kwargs["part"] == "contentDetails"
+        assert kwargs["body"]["id"] == "bid-1"
+        assert kwargs["body"]["contentDetails"] == {"enableEmbed": True}
+
     # -- _api_update_video_status --------------------------------------------
 
     def test_api_update_video_status_calls_videos_update(self, mock_youtube):
@@ -292,6 +307,34 @@ class TestHighLevelOrchestration:
         assert kwargs["part"] == "status"
         assert kwargs["body"]["id"] == "vid-1"
         assert kwargs["body"]["status"] == {"embeddable": True}
+
+    # -- apply_broadcast_embeddable ------------------------------------------
+
+    @patch("stream._api_update_broadcast_content_details")
+    def test_apply_broadcast_embeddable_true(self, mock_update, mock_logger):
+        """Sets enableEmbed=True on the broadcast via contentDetails update."""
+        yt = MagicMock()
+        stream.apply_broadcast_embeddable(yt, "bid", True, mock_logger)
+        mock_update.assert_called_once_with(yt, "bid", {"enableEmbed": True})
+        mock_logger.debug.assert_called_once()
+
+    @patch("stream._api_update_broadcast_content_details")
+    def test_apply_broadcast_embeddable_false(self, mock_update, mock_logger):
+        """Sets enableEmbed=False on the broadcast."""
+        yt = MagicMock()
+        stream.apply_broadcast_embeddable(yt, "bid", False, mock_logger)
+        mock_update.assert_called_once_with(yt, "bid", {"enableEmbed": False})
+
+    @patch("stream._api_update_broadcast_content_details")
+    def test_apply_broadcast_embeddable_http_error_warns(self, mock_update, mock_logger):
+        """HttpError is caught and logged as a warning, no exception raised."""
+        from googleapiclient.errors import HttpError
+
+        mock_update.side_effect = HttpError(
+            resp=MagicMock(status=400), content=b"invalidEmbedSetting"
+        )
+        stream.apply_broadcast_embeddable(MagicMock(), "bid", True, mock_logger)
+        mock_logger.warn.assert_called_once()
 
     # -- apply_video_embeddable ----------------------------------------------
 

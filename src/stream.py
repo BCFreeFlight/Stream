@@ -507,7 +507,7 @@ def build_youtube_service(creds):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _api_insert_broadcast(youtube, title, privacy, enable_monitor, embeddable):
+def _api_insert_broadcast(youtube, title, privacy, enable_monitor):
     """Call liveBroadcasts.insert and return the API response."""
     body = {
         "snippet": {
@@ -526,7 +526,6 @@ def _api_insert_broadcast(youtube, title, privacy, enable_monitor, embeddable):
             },
             "enableAutoStart": False,
             "enableAutoStop": False,
-            "enableEmbed": embeddable,
         },
     }
     return (
@@ -618,6 +617,18 @@ def _api_update_broadcast_snippet(youtube, broadcast_id, snippet):
     )
 
 
+def _api_update_broadcast_content_details(youtube, broadcast_id, content_details):
+    """Call liveBroadcasts.update to replace contentDetails fields."""
+    return (
+        youtube.liveBroadcasts()
+        .update(
+            part="contentDetails",
+            body={"id": broadcast_id, "contentDetails": content_details},
+        )
+        .execute()
+    )
+
+
 def _api_update_video_snippet(youtube, video_id, snippet):
     """Call videos.update to replace the video snippet."""
     return (
@@ -671,10 +682,11 @@ def create_broadcast(youtube, config, logger):
     embeddable = config["youtube"]["embeddable"]
 
     logger.info(f'Creating broadcast: title="{title}", privacy={privacy}, embeddable={embeddable}')
-    resp = _api_insert_broadcast(youtube, title, privacy, enable_monitor, embeddable)
+    resp = _api_insert_broadcast(youtube, title, privacy, enable_monitor)
     broadcast_id = resp["id"]
     logger.info(f"Broadcast created: {broadcast_id}")
     logger.info(f"Stable stream URL: https://youtube.com/live/{broadcast_id}")
+    apply_broadcast_embeddable(youtube, broadcast_id, embeddable, logger)
     return broadcast_id
 
 
@@ -713,6 +725,17 @@ def apply_broadcast_category(youtube, broadcast_id, category_id, logger):
         logger.debug(f"Video category set to {category_id}")
     except HttpError as exc:
         logger.warn(f"Could not set video category: {exc}")
+
+
+def apply_broadcast_embeddable(youtube, broadcast_id, embeddable, logger):
+    """Set the enableEmbed flag on the broadcast via liveBroadcasts.update."""
+    try:
+        _api_update_broadcast_content_details(
+            youtube, broadcast_id, {"enableEmbed": embeddable}
+        )
+        logger.debug(f"Broadcast embeddable set to {embeddable}")
+    except HttpError as exc:
+        logger.warn(f"Could not set broadcast embeddable: {exc}")
 
 
 def apply_video_embeddable(youtube, broadcast_id, embeddable, logger):
