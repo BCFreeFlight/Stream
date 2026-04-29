@@ -686,7 +686,7 @@ def create_broadcast(youtube, config, logger):
     broadcast_id = resp["id"]
     logger.info(f"Broadcast created: {broadcast_id}")
     logger.info(f"Stable stream URL: https://youtube.com/live/{broadcast_id}")
-    apply_broadcast_embeddable(youtube, broadcast_id, embeddable, logger)
+    apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, logger)
     return broadcast_id
 
 
@@ -727,11 +727,16 @@ def apply_broadcast_category(youtube, broadcast_id, category_id, logger):
         logger.warn(f"Could not set video category: {exc}")
 
 
-def apply_broadcast_embeddable(youtube, broadcast_id, embeddable, logger):
+def apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, logger):
     """Set the enableEmbed flag on the broadcast via liveBroadcasts.update."""
     try:
         _api_update_broadcast_content_details(
-            youtube, broadcast_id, {"enableEmbed": embeddable}
+            youtube,
+            broadcast_id,
+            {
+                "enableEmbed": embeddable,
+                "monitorStream": {"enableMonitorStream": enable_monitor},
+            },
         )
         logger.debug(f"Broadcast embeddable set to {embeddable}")
     except HttpError as exc:
