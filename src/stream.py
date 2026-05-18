@@ -1866,7 +1866,7 @@ def _connect_to_broadcast(config, logger, attempt_number=0):
     return BroadcastContext(youtube, broadcast_id, stream_id, rtmp_url, stream_key)
 
 
-def _stream_until_exit(config, logger, ctx, res=None):
+def _stream_until_exit(config, logger, ctx, res=None, first_attempt=False):
     """Launch ffmpeg, ensure the broadcast is live, then relay output until exit."""
     global _ffmpeg_process
 
@@ -1889,6 +1889,10 @@ def _stream_until_exit(config, logger, ctx, res=None):
         time.sleep(15)
 
     ensure_broadcast_live(ctx.youtube, ctx.broadcast_id, config, logger, res)
+
+    if first_attempt:
+        live_broadcast_id = config["youtube"]["broadcastId"]
+        update_broadcast_title(ctx.youtube, live_broadcast_id, config, logger)
 
     process.wait()
     output_thread.join(timeout=5)
@@ -1924,10 +1928,7 @@ def _run_stream_loop(config, logger, res=None):
             if is_stop_requested(config):
                 break
 
-            if attempt == 0:
-                update_broadcast_title(ctx.youtube, ctx.broadcast_id, config, logger)
-
-            _stream_until_exit(config, logger, ctx, res)
+            _stream_until_exit(config, logger, ctx, res, first_attempt=(attempt == 0))
         except Exception as exc:
             logger.warn(f"Streaming error: {exc}")
             _cleanup_ffmpeg()

@@ -393,3 +393,95 @@ class TestDoSetProperty:
             ["youtube.privacy", "private"],
             ["cron.autoUpdate", "true"],
         ])
+
+
+# ── _stream_until_exit title update ordering ────────────────────────────────
+
+
+class TestStreamUntilExitTitleUpdate:
+    """Regression tests: update_broadcast_title must be called with the live
+    broadcast ID *after* ensure_broadcast_live, never the old completed one."""
+
+    def _make_ctx(self, broadcast_id="bcast-old"):
+        ctx = MagicMock(spec=stream.BroadcastContext)
+        ctx.broadcast_id = broadcast_id
+        ctx.stream_id = "stream-1"
+        ctx.rtmp_url = "rtmp://a.rtmp.youtube.com/live2"
+        ctx.stream_key = "key"
+        ctx.youtube = MagicMock()
+        return ctx
+
+    @patch("stream.update_broadcast_title")
+    @patch("stream.ensure_broadcast_live")
+    @patch("stream.wait_for_stream_active", return_value=True)
+    @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
+    @patch("stream.start_ffmpeg_process")
+    @patch("stream.build_ffmpeg_command", return_value=[])
+    def test_title_updated_after_ensure_live_on_first_attempt(
+        self, mock_cmd, mock_start, mock_relay, mock_wait,
+        mock_ensure, mock_title, sample_config, mock_logger
+    ):
+        """On first_attempt=True, title is updated using config broadcastId after ensure_broadcast_live."""
+        mock_process = MagicMock()
+        mock_process.wait.return_value = 0
+        mock_process.returncode = 0
+        mock_start.return_value = mock_process
+
+        sample_config["youtube"]["broadcastId"] = "bcast-new"
+        ctx = self._make_ctx("bcast-old")
+
+        stream._stream_until_exit(sample_config, mock_logger, ctx, first_attempt=True)
+
+        mock_title.assert_called_once_with(ctx.youtube, "bcast-new", sample_config, mock_logger)
+
+    @patch("stream.update_broadcast_title")
+    @patch("stream.ensure_broadcast_live")
+    @patch("stream.wait_for_stream_active", return_value=True)
+    @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
+    @patch("stream.start_ffmpeg_process")
+    @patch("stream.build_ffmpeg_command", return_value=[])
+    def test_title_not_updated_on_retry(
+        self, mock_cmd, mock_start, mock_relay, mock_wait,
+        mock_ensure, mock_title, sample_config, mock_logger
+    ):
+        """On first_attempt=False (retry), update_broadcast_title is never called."""
+        mock_process = MagicMock()
+        mock_process.wait.return_value = 0
+        mock_process.returncode = 0
+        mock_start.return_value = mock_process
+
+        ctx = self._make_ctx()
+
+        stream._stream_until_exit(sample_config, mock_logger, ctx, first_attempt=False)
+
+        mock_title.assert_not_called()
+
+    @patch("stream.update_broadcast_title")
+    @patch("stream.ensure_broadcast_live")
+    @patch("stream.wait_for_stream_active", return_value=True)
+    @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
+    @patch("stream.start_ffmpeg_process")
+    @patch("stream.build_ffmpeg_command", return_value=[])
+    def test_title_uses_new_broadcast_id_after_complete(
+        self, mock_cmd, mock_start, mock_relay, mock_wait,
+        mock_ensure, mock_title, sample_config, mock_logger
+    ):
+        """When ensure_broadcast_live creates a new broadcast (old was complete),
+        update_broadcast_title receives the new broadcast ID, not the old one."""
+        mock_process = MagicMock()
+        mock_process.wait.return_value = 0
+        mock_process.returncode = 0
+        mock_start.return_value = mock_process
+
+        def simulate_new_broadcast(yt, bid, config, logger, res=None):
+            config["youtube"]["broadcastId"] = "bcast-fresh"
+
+        mock_ensure.side_effect = simulate_new_broadcast
+
+        ctx = self._make_ctx("bcast-old")
+        stream._stream_until_exit(sample_config, mock_logger, ctx, first_attempt=True)
+
+        title_call_args = mock_title.call_args
+        assert title_call_args[0][1] == "bcast-fresh", (
+            "update_broadcast_title should use the new broadcast ID, not bcast-old"
+        )
