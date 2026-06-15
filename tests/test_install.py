@@ -171,6 +171,8 @@ class TestPromptAllConfigValues:
             "youtube": {
                 "broadcastTitle": "T: {date}",
                 "privacy": "public",
+                "enableDvr": False,
+                "archivePrivacy": "private",
                 "categoryId": "22",
                 "broadcastId": "existing-bcast",
                 "streamId": "",
@@ -205,6 +207,7 @@ class TestPromptAllConfigValues:
             "stream": {"rtspUrl": "rtsp://cam/live", "videoCodec": "copy",
                        "audioCodec": "copy", "mute": False},
             "youtube": {"broadcastTitle": "T: {date}", "privacy": "public",
+                        "enableDvr": False, "archivePrivacy": "private",
                         "categoryId": "22", "broadcastId": "b", "streamURL": "",
                         "backupStreamUrl": "", "streamKey": ""},
             "cron": {"enabled": False, "start": "", "stop": "",
@@ -226,6 +229,7 @@ class TestPromptAllConfigValues:
             "stream": {"rtspUrl": "rtsp://cam/live", "videoCodec": "copy",
                        "audioCodec": "copy", "mute": False},
             "youtube": {"broadcastTitle": "T: {date}", "privacy": "public",
+                        "enableDvr": False, "archivePrivacy": "private",
                         "categoryId": "22", "broadcastId": "b", "streamURL": "",
                         "backupStreamUrl": "", "streamKey": ""},
             "cron": {},  # no 'enabled' key — should trigger the prompt

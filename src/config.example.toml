@@ -38,7 +38,7 @@ mute = false
 # Title template — {date} is replaced with today's date (e.g. "My Location: 2026-04-12")
 broadcastTitle = "My Location: {date}"
 
-# Broadcast privacy: public, unlisted, or private
+# Live broadcast privacy: public, unlisted, or private
 privacy = "public"
 
 # YouTube category ID (22 = "People & Blogs")
@@ -49,6 +49,12 @@ enableMonitorStream = false
 
 # Allow the broadcast to be embedded on external websites
 embeddable = true
+
+# Disable DVR — when false, viewers cannot rewind or scrub the live feed
+enableDvr = false
+
+# Privacy applied to the archived video immediately after --stop
+archivePrivacy = "private"
 
 # Persistent broadcast ID — created by --install, reused by --start
 broadcastId = ""
