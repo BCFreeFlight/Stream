@@ -18,13 +18,13 @@ class TestLowLevelAPI:
 
     def test_api_insert_broadcast_calls_execute(self, mock_youtube):
         """insert_broadcast chains liveBroadcasts().insert().execute()."""
-        stream._api_insert_broadcast(mock_youtube, "title", "public", False)
+        stream._api_insert_broadcast(mock_youtube, "title", "public", False, False)
         mock_youtube.liveBroadcasts().insert.assert_called_once()
         mock_youtube.liveBroadcasts().insert().execute.assert_called_once()
 
     def test_api_insert_broadcast_body_structure(self, mock_youtube):
         """The body kwarg contains the expected snippet, status, and contentDetails."""
-        stream._api_insert_broadcast(mock_youtube, "My Title", "unlisted", False)
+        stream._api_insert_broadcast(mock_youtube, "My Title", "unlisted", False, False)
         _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
         body = kwargs["body"]
 
@@ -35,7 +35,7 @@ class TestLowLevelAPI:
 
     def test_api_insert_broadcast_does_not_set_enable_embed(self, mock_youtube):
         """enableEmbed is not set during insert — it is applied via update after creation."""
-        stream._api_insert_broadcast(mock_youtube, "T", "public", False)
+        stream._api_insert_broadcast(mock_youtube, "T", "public", False, False)
         _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
         assert "enableEmbed" not in kwargs["body"]["contentDetails"]
         assert "embeddable" not in kwargs["body"].get("status", {})
@@ -211,7 +211,8 @@ class TestHighLevelOrchestration:
         yt = MagicMock()
         stream.create_broadcast(yt, sample_config, mock_logger)
         enable_monitor = sample_config["youtube"]["enableMonitorStream"]
-        mock_embed.assert_called_once_with(yt, "bcast-3", False, enable_monitor, mock_logger)
+        enable_dvr = sample_config["youtube"]["enableDvr"]
+        mock_embed.assert_called_once_with(yt, "bcast-3", False, enable_monitor, enable_dvr, mock_logger)
 
     # -- create_stream_resource ----------------------------------------------
 
@@ -316,13 +317,13 @@ class TestHighLevelOrchestration:
 
     @patch("stream._api_update_broadcast_content_details")
     def test_apply_broadcast_embeddable_true(self, mock_update, mock_logger):
-        """Sets enableEmbed=True and includes enableMonitorStream in the update body."""
+        """Sets enableEmbed=True and includes enableMonitorStream and enableDvr in the update body."""
         yt = MagicMock()
-        stream.apply_broadcast_embeddable(yt, "bid", True, False, mock_logger)
+        stream.apply_broadcast_embeddable(yt, "bid", True, False, False, mock_logger)
         mock_update.assert_called_once_with(
             yt,
             "bid",
-            {"enableEmbed": True, "monitorStream": {"enableMonitorStream": False}},
+            {"enableEmbed": True, "enableDvr": False, "monitorStream": {"enableMonitorStream": False}},
         )
         mock_logger.debug.assert_called_once()
 
@@ -330,12 +331,29 @@ class TestHighLevelOrchestration:
     def test_apply_broadcast_embeddable_false(self, mock_update, mock_logger):
         """Sets enableEmbed=False on the broadcast."""
         yt = MagicMock()
-        stream.apply_broadcast_embeddable(yt, "bid", False, False, mock_logger)
+        stream.apply_broadcast_embeddable(yt, "bid", False, False, False, mock_logger)
         mock_update.assert_called_once_with(
             yt,
             "bid",
-            {"enableEmbed": False, "monitorStream": {"enableMonitorStream": False}},
+            {"enableEmbed": False, "enableDvr": False, "monitorStream": {"enableMonitorStream": False}},
         )
+
+    @patch("stream._api_update_broadcast_content_details")
+    def test_apply_broadcast_embeddable_dvr_disabled(self, mock_update, mock_logger):
+        """enableDvr=False is forwarded in the contentDetails patch."""
+        yt = MagicMock()
+        stream.apply_broadcast_embeddable(yt, "bid", True, False, False, mock_logger)
+        _, kwargs = mock_update.call_args
+        content_details = mock_update.call_args[0][2]
+        assert content_details["enableDvr"] is False
+
+    @patch("stream._api_update_broadcast_content_details")
+    def test_apply_broadcast_embeddable_dvr_enabled(self, mock_update, mock_logger):
+        """enableDvr=True is forwarded in the contentDetails patch."""
+        yt = MagicMock()
+        stream.apply_broadcast_embeddable(yt, "bid", True, False, True, mock_logger)
+        content_details = mock_update.call_args[0][2]
+        assert content_details["enableDvr"] is True
 
     @patch("stream._api_update_broadcast_content_details")
     def test_apply_broadcast_embeddable_http_error_warns(self, mock_update, mock_logger):
@@ -345,7 +363,7 @@ class TestHighLevelOrchestration:
         mock_update.side_effect = HttpError(
             resp=MagicMock(status=400), content=b"invalidEmbedSetting"
         )
-        stream.apply_broadcast_embeddable(MagicMock(), "bid", True, False, mock_logger)
+        stream.apply_broadcast_embeddable(MagicMock(), "bid", True, False, False, mock_logger)
         mock_logger.warn.assert_called_once()
 
     # -- apply_video_embeddable ----------------------------------------------
@@ -783,3 +801,92 @@ class TestHighLevelOrchestration:
         mock_creds.side_effect = Exception("auth failed")
         stream._retire_current_broadcast_safely(sample_config, mock_logger)
         mock_logger.warn.assert_called()
+
+    # -- _api_insert_broadcast enableDvr -------------------------------------
+
+    def test_api_insert_broadcast_sets_enable_dvr_false(self, mock_youtube):
+        """enableDvr=False is included in the contentDetails body."""
+        stream._api_insert_broadcast(mock_youtube, "T", "public", False, False)
+        _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
+        assert kwargs["body"]["contentDetails"]["enableDvr"] is False
+
+    def test_api_insert_broadcast_sets_enable_dvr_true(self, mock_youtube):
+        """enableDvr=True is forwarded to the contentDetails body."""
+        stream._api_insert_broadcast(mock_youtube, "T", "public", False, True)
+        _, kwargs = mock_youtube.liveBroadcasts().insert.call_args
+        assert kwargs["body"]["contentDetails"]["enableDvr"] is True
+
+    # -- _set_archive_privacy ------------------------------------------------
+
+    @patch("stream._api_update_video_status")
+    def test_set_archive_privacy_calls_update(self, mock_update, mock_logger):
+        """_set_archive_privacy calls _api_update_video_status with the given privacy level."""
+        yt = MagicMock()
+        stream._set_archive_privacy(yt, "bid", "private", mock_logger)
+        mock_update.assert_called_once_with(yt, "bid", {"privacyStatus": "private"})
+        mock_logger.info.assert_called_once()
+
+    @patch("stream._api_update_video_status")
+    def test_set_archive_privacy_unlisted(self, mock_update, mock_logger):
+        """_set_archive_privacy works for unlisted as well."""
+        yt = MagicMock()
+        stream._set_archive_privacy(yt, "bid", "unlisted", mock_logger)
+        mock_update.assert_called_once_with(yt, "bid", {"privacyStatus": "unlisted"})
+
+    @patch("stream._api_update_video_status")
+    def test_set_archive_privacy_error_warns(self, mock_update, mock_logger):
+        """Exceptions from _api_update_video_status are caught and logged."""
+        mock_update.side_effect = Exception("api error")
+        stream._set_archive_privacy(MagicMock(), "bid", "private", mock_logger)
+        mock_logger.warn.assert_called_once()
+
+    # -- _complete_broadcast archive privacy ---------------------------------
+
+    @patch("stream._set_archive_privacy")
+    @patch("stream.build_youtube_service")
+    @patch("stream.get_valid_credentials")
+    @patch("stream._api_get_broadcast_lifecycle")
+    @patch("stream._api_transition_broadcast")
+    def test_complete_broadcast_sets_archive_privacy(
+        self, mock_trans, mock_lifecycle, mock_creds, mock_build, mock_set_privacy,
+        mock_logger, sample_config
+    ):
+        """_complete_broadcast calls _set_archive_privacy after transitioning to complete."""
+        mock_lifecycle.return_value = "live"
+        yt = MagicMock()
+        mock_build.return_value = yt
+        stream._complete_broadcast(sample_config, mock_logger)
+        mock_set_privacy.assert_called_once_with(
+            yt, "bcast-123", sample_config["youtube"]["archivePrivacy"], mock_logger
+        )
+
+    @patch("stream._set_archive_privacy")
+    @patch("stream.build_youtube_service")
+    @patch("stream.get_valid_credentials")
+    @patch("stream._api_get_broadcast_lifecycle")
+    @patch("stream._api_transition_broadcast")
+    def test_complete_broadcast_archive_privacy_reads_from_config(
+        self, mock_trans, mock_lifecycle, mock_creds, mock_build, mock_set_privacy,
+        mock_logger, sample_config
+    ):
+        """Archive privacy value comes from config, not hardcoded."""
+        mock_lifecycle.return_value = "live"
+        sample_config["youtube"]["archivePrivacy"] = "unlisted"
+        mock_build.return_value = MagicMock()
+        stream._complete_broadcast(sample_config, mock_logger)
+        mock_set_privacy.assert_called_once()
+        assert mock_set_privacy.call_args[0][2] == "unlisted"
+
+    @patch("stream._set_archive_privacy")
+    @patch("stream.build_youtube_service")
+    @patch("stream.get_valid_credentials")
+    @patch("stream._api_get_broadcast_lifecycle")
+    @patch("stream._api_transition_broadcast")
+    def test_complete_broadcast_skips_archive_privacy_when_already_complete(
+        self, mock_trans, mock_lifecycle, mock_creds, mock_build, mock_set_privacy,
+        mock_logger, sample_config
+    ):
+        """_set_archive_privacy is not called when the broadcast is already complete."""
+        mock_lifecycle.return_value = "complete"
+        stream._complete_broadcast(sample_config, mock_logger)
+        mock_set_privacy.assert_not_called()

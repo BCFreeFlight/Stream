@@ -183,6 +183,8 @@ CONFIG_DEFAULTS = {
         "categoryId": "22",
         "enableMonitorStream": False,
         "embeddable": True,
+        "enableDvr": False,
+        "archivePrivacy": "private",
         "broadcastId": "",
         "streamURL": "",
         "backupStreamUrl": "",
@@ -507,7 +509,7 @@ def build_youtube_service(creds):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _api_insert_broadcast(youtube, title, privacy, enable_monitor):
+def _api_insert_broadcast(youtube, title, privacy, enable_monitor, enable_dvr):
     """Call liveBroadcasts.insert and return the API response."""
     body = {
         "snippet": {
@@ -526,6 +528,7 @@ def _api_insert_broadcast(youtube, title, privacy, enable_monitor):
             },
             "enableAutoStart": False,
             "enableAutoStop": False,
+            "enableDvr": enable_dvr,
         },
     }
     return (
@@ -680,14 +683,15 @@ def create_broadcast(youtube, config, logger):
     privacy = config["youtube"]["privacy"]
     enable_monitor = config["youtube"]["enableMonitorStream"]
     embeddable = config["youtube"]["embeddable"]
+    enable_dvr = config["youtube"]["enableDvr"]
 
-    logger.info(f'Creating broadcast: title="{title}", privacy={privacy}, embeddable={embeddable}')
-    resp = _api_insert_broadcast(youtube, title, privacy, enable_monitor)
+    logger.info(f'Creating broadcast: title="{title}", privacy={privacy}, embeddable={embeddable}, enableDvr={enable_dvr}')
+    resp = _api_insert_broadcast(youtube, title, privacy, enable_monitor, enable_dvr)
     broadcast_id = resp["id"]
     logger.info(f"Broadcast created: {broadcast_id}")
     logger.info(f"Stable stream URL: https://youtube.com/live/{broadcast_id}")
     if not embeddable:
-        apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, logger)
+        apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, enable_dvr, logger)
     return broadcast_id
 
 
@@ -728,20 +732,21 @@ def apply_broadcast_category(youtube, broadcast_id, category_id, logger):
         logger.warn(f"Could not set video category: {exc}")
 
 
-def apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, logger):
-    """Set the enableEmbed flag on the broadcast via liveBroadcasts.update."""
+def apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, enable_dvr, logger):
+    """Set the enableEmbed and enableDvr flags on the broadcast via liveBroadcasts.update."""
     try:
         _api_update_broadcast_content_details(
             youtube,
             broadcast_id,
             {
                 "enableEmbed": embeddable,
+                "enableDvr": enable_dvr,
                 "monitorStream": {"enableMonitorStream": enable_monitor},
             },
         )
-        logger.debug(f"Broadcast embeddable set to {embeddable}")
+        logger.debug(f"Broadcast embeddable set to {embeddable}, enableDvr set to {enable_dvr}")
     except HttpError as exc:
-        logger.warn(f"Could not set broadcast embeddable: {exc}")
+        logger.warn(f"Could not set broadcast content details: {exc}")
 
 
 def apply_video_embeddable(youtube, broadcast_id, embeddable, logger):
@@ -1465,6 +1470,20 @@ def prompt_all_config_values(res, existing=None):
         default=defaults["privacy"],
         validator=privacy_validator,
     )
+    existing_dvr = _get_nested(ex, "youtube", "enableDvr", default=None)
+    if existing_dvr is not None:
+        enable_dvr = existing_dvr
+    else:
+        dvr_str = _prompt(
+            prompts["enableDvr"], default=defaults["enableDvr"], validator=yes_no_validator
+        )
+        enable_dvr = dvr_str.lower() == "yes"
+    archive_privacy = _smart_prompt(
+        prompts["archivePrivacy"],
+        _get_nested(ex, "youtube", "archivePrivacy"),
+        default=defaults["archivePrivacy"],
+        validator=privacy_validator,
+    )
     category_id = _smart_prompt(
         prompts["categoryId"],
         _get_nested(ex, "youtube", "categoryId"),
@@ -1534,6 +1553,8 @@ def prompt_all_config_values(res, existing=None):
                 ex, "youtube", "enableMonitorStream", default=False
             ),
             "embeddable": _get_nested(ex, "youtube", "embeddable", default=True),
+            "enableDvr": enable_dvr,
+            "archivePrivacy": archive_privacy.lower() if isinstance(archive_privacy, str) else archive_privacy,
             "broadcastId": broadcast_id,
             "streamURL": _get_nested(ex, "youtube", "streamURL"),
             "backupStreamUrl": _get_nested(ex, "youtube", "backupStreamUrl"),
@@ -2037,6 +2058,15 @@ def _cleanup_stop_files(config):
     cleanup_stop_sentinel(config)
 
 
+def _set_archive_privacy(youtube, broadcast_id, archive_privacy, logger):
+    """Set the privacy status on an archived broadcast's video resource."""
+    try:
+        _api_update_video_status(youtube, broadcast_id, {"privacyStatus": archive_privacy})
+        logger.info(f"Archived broadcast {broadcast_id} set to {archive_privacy}")
+    except Exception as exc:
+        logger.warn(f"Could not set archive privacy on {broadcast_id}: {exc}")
+
+
 def _complete_broadcast(config, logger):
     """Transition the YouTube broadcast to complete so it is archived as a VOD."""
     broadcast_id = config["youtube"].get("broadcastId", "")
@@ -2054,6 +2084,8 @@ def _complete_broadcast(config, logger):
         if status == "live":
             _api_transition_broadcast(youtube, broadcast_id, "complete")
             logger.info(f"Broadcast {broadcast_id} transitioned to complete (archived)")
+            archive_privacy = config["youtube"].get("archivePrivacy", "private")
+            _set_archive_privacy(youtube, broadcast_id, archive_privacy, logger)
         elif status == "complete":
             logger.debug("Broadcast is already complete")
         else:

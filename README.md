@@ -72,10 +72,12 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `stream.audioCodec` | string | `copy` | ffmpeg audio codec |
 | `stream.mute` | boolean | `false` | If `true`, audio is stripped (`-an`) |
 | `youtube.broadcastTitle` | string | `My Location: {date}` | Title template; `{date}` resolves to the current ISO date |
-| `youtube.privacy` | string | `public` | Broadcast privacy: `public`, `unlisted`, or `private` |
+| `youtube.privacy` | string | `public` | Live broadcast privacy: `public`, `unlisted`, or `private` |
 | `youtube.categoryId` | string | `22` | YouTube category ID (22 = People & Blogs) |
 | `youtube.enableMonitorStream` | boolean | `false` | Enable the YouTube monitor stream |
 | `youtube.embeddable` | boolean | `true` | Allow the broadcast to be embedded on external websites |
+| `youtube.enableDvr` | boolean | `false` | Allow viewers to rewind the live stream (DVR); `false` disables scrubbing |
+| `youtube.archivePrivacy` | string | `private` | Privacy applied to the archived video immediately after `--stop`: `public`, `unlisted`, or `private` |
 | `youtube.broadcastId` | string | *(auto-created or prompted)* | Persistent YouTube broadcast ID |
 | `youtube.streamURL` | string | *(auto-populated)* | RTMP ingest URL (returned by `liveStreams.insert`) |
 | `youtube.backupStreamUrl` | string | *(auto-populated)* | Backup RTMP ingest URL (used on retry) |
