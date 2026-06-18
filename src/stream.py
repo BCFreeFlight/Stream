@@ -2263,6 +2263,13 @@ def do_update():
           "Updated to {version}. Restart the script to use the new version.").format(
               version=latest))
 
+    try:
+        config = load_config()
+        if config.get("cron", {}).get("enabled"):
+            register_cron_entries(config)
+    except Exception:
+        pass
+
 
 # ── --roll-back Command ──────────────────────────────────────────────────────
 
