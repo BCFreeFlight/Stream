@@ -177,6 +177,103 @@ class TestDoUpdate:
 
         mock_migrate.assert_called_once()
 
+    def test_do_update_registers_cron_on_success(self, tmp_script_dir, sample_config, sample_resources):
+        """After a successful download, do_update re-registers cron entries when cron is enabled."""
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "stream.v0.1.4.bak.zip"), \
+             patch("stream._download_release_asset"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config) as mock_load_config, \
+             patch("stream.register_cron_entries") as mock_register:
+            stream.do_update()
+
+        mock_load_config.assert_called_once()
+        mock_register.assert_called_once_with(sample_config)
+
+    def test_do_update_skips_cron_when_disabled(self, tmp_script_dir, sample_config, sample_resources):
+        """do_update does not call register_cron_entries when cron.enabled is False."""
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+        sample_config["cron"]["enabled"] = False
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "stream.v0.1.4.bak.zip"), \
+             patch("stream._download_release_asset"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream.register_cron_entries") as mock_register:
+            stream.do_update()
+
+        mock_register.assert_not_called()
+
+    def test_do_update_no_cron_when_already_latest(self, sample_config, sample_resources):
+        """do_update does not call register_cron_entries when already on the latest version."""
+        with patch.object(stream, "__version__", "v0.1.5"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream.register_cron_entries") as mock_register:
+            stream.do_update()
+
+        mock_register.assert_not_called()
+
+    def test_do_update_no_cron_when_download_fails(self, tmp_script_dir, sample_config, sample_resources):
+        """do_update does not call register_cron_entries if a download fails."""
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "stream.v0.1.4.bak.zip"), \
+             patch("stream._download_release_asset", side_effect=Exception("network error")), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream.register_cron_entries") as mock_register:
+            stream.do_update()
+
+        mock_register.assert_not_called()
+
+    def test_do_update_survives_load_config_failure(self, tmp_script_dir, sample_resources):
+        """do_update completes successfully even if load_config raises (e.g. no config.toml)."""
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "stream.v0.1.4.bak.zip"), \
+             patch("stream._download_release_asset"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", side_effect=FileNotFoundError("no config.toml")), \
+             patch("stream.register_cron_entries") as mock_register:
+            stream.do_update()  # must not raise
+
+        mock_register.assert_not_called()
+
+    def test_do_update_survives_register_cron_failure(self, tmp_script_dir, sample_config, sample_resources):
+        """do_update completes successfully even if register_cron_entries raises."""
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "stream.v0.1.4.bak.zip"), \
+             patch("stream._download_release_asset"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream.register_cron_entries", side_effect=Exception("crontab failed")):
+            stream.do_update()  # must not raise
+
 
 # ── Rollback — extract version ──────────────────────────────────────────────
 
