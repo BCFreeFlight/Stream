@@ -88,6 +88,9 @@ def sample_config():
             "autoUpdate": False,
             "update": "0 0 * * *",
         },
+        "update": {
+            "skippedVersion": "",
+        },
     }
     return copy.deepcopy(config)
 

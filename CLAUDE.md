@@ -131,6 +131,9 @@ start = "30 6 1-31 4-10 *"
 stop = "25 18 1-31 4-10 *"
 autoUpdate = false # default to false to avoid breaking changes without user consent
 update = "0 0 * * *" # schedule for checking for updates (e.g. "0 0 * * *" for daily at midnight - default)
+
+[update]
+skippedVersion = "" # set automatically by --roll-back; --update skips releases <= this value until a newer one is available
 ```
 
 ### .env — secrets only

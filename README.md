@@ -93,6 +93,7 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `cron.stop` | string | `25 18 1-31 4-10 *` | Cron expression for daily stop |
 | `cron.autoUpdate` | boolean | `false` | If `true`, registers an update cron job that runs `--update` on schedule |
 | `cron.update` | string | `0 0 * * *` | Cron expression for automatic update checks (only used when `autoUpdate` is `true`) |
+| `update.skippedVersion` | string | `""` | Set automatically by `--roll-back`; `--update` skips any release ≤ this version and clears it once a newer release is installed |
 
 ### .env
 

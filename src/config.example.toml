@@ -79,3 +79,8 @@ autoUpdate = false
 
 # Cron schedule for automatic update checks (e.g. daily at midnight)
 update = "0 0 * * *"
+
+# Automatic update behaviour — managed by --roll-back and --update
+[update]
+# Version skipped by --roll-back; --update ignores releases <= this value (clear with --set-property update.skippedVersion "")
+skippedVersion = ""
