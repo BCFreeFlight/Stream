@@ -416,3 +416,243 @@ class TestDoRollback:
 
         captured = capsys.readouterr()
         assert "v9.9.9" in captured.out or "not found" in captured.out.lower() or "No backup" in captured.out
+
+
+# ── Version comparison helpers ───────────────────────────────────────────────
+
+
+class TestParseVersion:
+    def test_parse_standard_tag(self):
+        """'v1.0.20' parses to (1, 0, 20)."""
+        assert stream._parse_version("v1.0.20") == (1, 0, 20)
+
+    def test_parse_no_prefix(self):
+        """'1.2.3' (no v) parses to (1, 2, 3)."""
+        assert stream._parse_version("1.2.3") == (1, 2, 3)
+
+    def test_parse_dev_returns_zeros(self):
+        """Non-numeric tag returns (0, 0, 0)."""
+        assert stream._parse_version("dev") == (0, 0, 0)
+
+    def test_parse_empty_returns_zeros(self):
+        """Empty string returns (0, 0, 0)."""
+        assert stream._parse_version("") == (0, 0, 0)
+
+    def test_parse_none_returns_zeros(self):
+        """None returns (0, 0, 0)."""
+        assert stream._parse_version(None) == (0, 0, 0)
+
+
+class TestVersionGt:
+    def test_newer_is_gt(self):
+        """v1.0.21 > v1.0.20."""
+        assert stream._version_gt("v1.0.21", "v1.0.20")
+
+    def test_equal_is_not_gt(self):
+        """v1.0.20 is not > v1.0.20."""
+        assert not stream._version_gt("v1.0.20", "v1.0.20")
+
+    def test_older_is_not_gt(self):
+        """v1.0.19 is not > v1.0.20."""
+        assert not stream._version_gt("v1.0.19", "v1.0.20")
+
+    def test_minor_version_bump(self):
+        """v1.1.0 > v1.0.99."""
+        assert stream._version_gt("v1.1.0", "v1.0.99")
+
+    def test_major_version_bump(self):
+        """v2.0.0 > v1.9.9."""
+        assert stream._version_gt("v2.0.0", "v1.9.9")
+
+
+# ── do_update — skipped version logic ───────────────────────────────────────
+
+
+class TestDoUpdateSkippedVersion:
+    def test_skips_when_latest_equals_skipped(self, capsys, sample_config, sample_resources):
+        """do_update skips download when latest == skippedVersion."""
+        sample_config.setdefault("update", {})["skippedVersion"] = "v0.1.5"
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream._download_release_asset") as mock_dl:
+            stream.do_update()
+
+        mock_dl.assert_not_called()
+        captured = capsys.readouterr()
+        assert "v0.1.5" in captured.out
+
+    def test_skips_when_latest_less_than_skipped(self, capsys, sample_config, sample_resources):
+        """do_update skips when latest is older than skippedVersion (edge case)."""
+        sample_config.setdefault("update", {})["skippedVersion"] = "v0.1.6"
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream._download_release_asset") as mock_dl:
+            stream.do_update()
+
+        mock_dl.assert_not_called()
+
+    def test_proceeds_when_latest_exceeds_skipped(self, tmp_script_dir, sample_config, sample_resources):
+        """do_update downloads when latest is strictly newer than skippedVersion."""
+        sample_config.setdefault("update", {})["skippedVersion"] = "v0.1.5"
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.6"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "x.zip"), \
+             patch("stream._download_release_asset") as mock_dl, \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream.save_config"), \
+             patch("stream.register_cron_entries"):
+            stream.do_update()
+
+        assert mock_dl.call_count == 2
+
+    def test_clears_skipped_version_after_successful_update(
+            self, tmp_script_dir, sample_config, sample_resources):
+        """do_update writes skippedVersion="" to config after updating past the skipped release."""
+        sample_config.setdefault("update", {})["skippedVersion"] = "v0.1.5"
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.6"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "x.zip"), \
+             patch("stream._download_release_asset"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream.save_config") as mock_save, \
+             patch("stream.register_cron_entries"):
+            stream.do_update()
+
+        saved_config = mock_save.call_args[0][0]
+        assert saved_config.get("update", {}).get("skippedVersion") == ""
+
+    def test_no_save_when_no_skipped_version(self, tmp_script_dir, sample_config, sample_resources):
+        """do_update does not call save_config for skippedVersion when none was set."""
+        sample_config.setdefault("update", {})["skippedVersion"] = ""
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "x.zip"), \
+             patch("stream._download_release_asset"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream.save_config") as mock_save, \
+             patch("stream.register_cron_entries"):
+            stream.do_update()
+
+        mock_save.assert_not_called()
+
+    def test_no_skip_check_when_skipped_version_empty(
+            self, tmp_script_dir, sample_config, sample_resources):
+        """do_update proceeds normally when skippedVersion is empty string."""
+        sample_config.setdefault("update", {})["skippedVersion"] = ""
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "x.zip"), \
+             patch("stream._download_release_asset") as mock_dl, \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream.save_config"), \
+             patch("stream.register_cron_entries"):
+            stream.do_update()
+
+        assert mock_dl.call_count == 2
+
+
+# ── do_rollback — skipped version marker ────────────────────────────────────
+
+
+class TestDoRollbackSkippedVersion:
+    def _make_backup(self, backup_dir, version, config_data=None):
+        backup_zip = backup_dir / f"stream.{version}.bak.zip"
+        with zipfile.ZipFile(backup_zip, "w") as zf:
+            zf.writestr("stream.py", f"# {version} content")
+            if config_data is not None:
+                zf.writestr("config.toml", tomli_w.dumps(config_data))
+        return backup_zip
+
+    def test_rollback_sets_skipped_version(
+            self, tmp_script_dir, sample_config, sample_resources):
+        """do_rollback writes the rolled-back-from version into update.skippedVersion."""
+        backup_dir = tmp_script_dir / "backup"
+        backup_dir.mkdir()
+        self._make_backup(backup_dir, "v0.1.4", sample_config)
+
+        (tmp_script_dir / "config.toml").write_bytes(tomli_w.dumps(sample_config).encode())
+
+        with patch.object(stream, "__version__", "v0.1.5"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream.save_config") as mock_save:
+            stream.do_rollback("v0.1.4")
+
+        saved = mock_save.call_args[0][0]
+        assert saved.get("update", {}).get("skippedVersion") == "v0.1.5"
+
+    def test_rollback_prints_skip_message(
+            self, tmp_script_dir, capsys, sample_config, sample_resources):
+        """do_rollback prints a message indicating which version will be skipped."""
+        backup_dir = tmp_script_dir / "backup"
+        backup_dir.mkdir()
+        self._make_backup(backup_dir, "v0.1.4", sample_config)
+
+        (tmp_script_dir / "config.toml").write_bytes(tomli_w.dumps(sample_config).encode())
+
+        with patch.object(stream, "__version__", "v0.1.5"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream.save_config"):
+            stream.do_rollback("v0.1.4")
+
+        captured = capsys.readouterr()
+        assert "v0.1.5" in captured.out
+
+    def test_rollback_does_not_set_skipped_version_for_dev(
+            self, tmp_script_dir, sample_config, sample_resources):
+        """do_rollback does not write skippedVersion when rolling back from 'dev' build."""
+        backup_dir = tmp_script_dir / "backup"
+        backup_dir.mkdir()
+        self._make_backup(backup_dir, "v0.1.4", sample_config)
+
+        (tmp_script_dir / "config.toml").write_bytes(tomli_w.dumps(sample_config).encode())
+
+        with patch.object(stream, "__version__", "dev"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream.save_config") as mock_save:
+            stream.do_rollback("v0.1.4")
+
+        mock_save.assert_not_called()
+
+    def test_rollback_survives_save_config_failure(
+            self, tmp_script_dir, capsys, sample_config, sample_resources):
+        """do_rollback completes successfully even if save_config raises after restore."""
+        backup_dir = tmp_script_dir / "backup"
+        backup_dir.mkdir()
+        self._make_backup(backup_dir, "v0.1.4", sample_config)
+
+        (tmp_script_dir / "config.toml").write_bytes(tomli_w.dumps(sample_config).encode())
+
+        with patch.object(stream, "__version__", "v0.1.5"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream.save_config", side_effect=OSError("disk full")):
+            stream.do_rollback("v0.1.4")  # must not raise
+
+        assert (tmp_script_dir / "stream.py").read_text() == "# v0.1.4 content"

@@ -33,6 +33,7 @@ All Python packages are self-installed by `stream.py` on first run. No `requirem
 |-----|------|---------|-------------|
 | `cron.autoUpdate` | boolean | `false` | When `true`, a cron job runs `--update` on the configured schedule |
 | `cron.update` | string | `0 0 * * *` | Cron expression for automatic update checks |
+| `update.skippedVersion` | string | `""` | Version to skip during `--update`; set automatically by `--roll-back`, cleared on next successful update past this version |
 | `logLevel` | string | `"info"` | Log verbosity: `debug`, `info`, `warning`, or `error`. Can be overridden per-run with `--log-level`. |
 | `youtube.enableDvr` | boolean | `false` | Allow viewers to rewind the live stream; `false` disables DVR scrubbing |
 | `youtube.archivePrivacy` | string | `"private"` | Privacy applied to the archived video immediately after `--stop` (`public`, `unlisted`, or `private`) |

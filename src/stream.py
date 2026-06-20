@@ -158,6 +158,8 @@ CONFIG_COMMENTS = {
     "[cron]": "# Cron schedule for automatic start/stop (crontab expressions)",
     "autoUpdate": "# Automatically check for and install updates on the update cron schedule",
     "update": "# Cron schedule for automatic update checks (e.g. daily at midnight)",
+    "[update]": "# Automatic update behaviour — managed by --roll-back and --update",
+    "skippedVersion": '# Version skipped by --roll-back; --update ignores releases <= this value (clear with --set-property update.skippedVersion "")',
 }
 
 CONFIG_DEFAULTS = {
@@ -196,6 +198,9 @@ CONFIG_DEFAULTS = {
         "stop": "25 18 1-31 4-10 *",
         "autoUpdate": False,
         "update": "0 0 * * *",
+    },
+    "update": {
+        "skippedVersion": "",
     },
 }
 
@@ -2201,6 +2206,19 @@ def _backup_current_files():
     return backup_path
 
 
+def _parse_version(tag):
+    """Parse a 'vX.Y.Z' tag into an integer tuple for comparison. Returns (0, 0, 0) on failure."""
+    try:
+        return tuple(int(x) for x in tag.lstrip("v").split("."))
+    except (ValueError, AttributeError):
+        return (0, 0, 0)
+
+
+def _version_gt(a, b):
+    """Return True if version tag a is strictly greater than version tag b."""
+    return _parse_version(a) > _parse_version(b)
+
+
 def _get_latest_release_tag():
     """Query the GitHub API for the latest release tag. Returns None on failure."""
     import urllib.request
@@ -2231,6 +2249,11 @@ def do_update():
     res = load_resources()
     msgs = res.get("update", {})
 
+    try:
+        config = load_config()
+    except Exception:
+        config = {}
+
     print(f"Current version: {__version__}")
 
     latest = _get_latest_release_tag()
@@ -2242,6 +2265,14 @@ def do_update():
 
     if latest == __version__:
         print(msgs.get("already_latest", "Already running the latest version."))
+        return
+
+    skipped = config.get("update", {}).get("skippedVersion", "")
+    if skipped and not _version_gt(latest, skipped):
+        print(msgs.get("skipped_version",
+              "Skipping {version} — rolled back from this release. "
+              "Will update automatically once a release newer than {skipped} is available.").format(
+                  version=latest, skipped=skipped))
         return
 
     backup_path = _backup_current_files()
@@ -2263,8 +2294,14 @@ def do_update():
           "Updated to {version}. Restart the script to use the new version.").format(
               version=latest))
 
+    if skipped:
+        try:
+            config.setdefault("update", {})["skippedVersion"] = ""
+            save_config(config)
+        except Exception:
+            pass
+
     try:
-        config = load_config()
         if config.get("cron", {}).get("enabled"):
             register_cron_entries(config)
     except Exception:
@@ -2354,11 +2391,23 @@ def do_rollback(version=None):
             print(msgs.get("cancelled", "Roll-back cancelled."))
             return
 
+    rolled_back_from = __version__
     restored_version = _extract_version_from_backup(backup)
     print(msgs.get("restoring", "Restoring from {version}...").format(version=restored_version))
     _restore_from_backup(backup)
     print(msgs.get("success", "Rolled back to {version}. Restart the script to use the restored version.").format(
         version=restored_version))
+
+    if rolled_back_from and rolled_back_from != "dev":
+        try:
+            cfg = load_config()
+            cfg.setdefault("update", {})["skippedVersion"] = rolled_back_from
+            save_config(cfg)
+            print(msgs.get("skipped_version_set",
+                  "--update will skip {version} until a newer release is available.").format(
+                      version=rolled_back_from))
+        except Exception:
+            pass
 
 
 # ── --set-property Command ───────────────────────────────────────────────────
