@@ -169,7 +169,7 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 | `--roll-back [VERSION]` | Restores `stream.py`, `resources.toml`, and `config.toml` from a backup. Without a version, lists available backups interactively. |
 | `--set-property KEY VALUE` | Sets a single `config.toml` value by dot-notation key (e.g. `cron.autoUpdate true`). Can be repeated for multiple properties in one invocation. Keys are validated against `CONFIG_DEFAULTS`; unknown keys and section names are rejected. |
 | `--log-level LEVEL` | Overrides log verbosity for the current run only (`debug`, `info`, `warning`, `error` — case-insensitive). Does not modify `config.toml`. Invalid values exit with an error. |
-
+| n/a | launches web UI at localhost:8765 |
 ---
 
 ## Dependency Management
