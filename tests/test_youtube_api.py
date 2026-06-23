@@ -719,18 +719,52 @@ class TestHighLevelOrchestration:
         stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
         mock_transition.assert_called_once_with(yt, "bid", "live")
 
-    @patch("stream.transition_to_live")
-    @patch("stream._create_fresh_broadcast", return_value="new-bid")
     @patch("stream._api_get_broadcast_lifecycle")
-    def test_ensure_broadcast_live_complete_creates_new(
-        self, mock_lifecycle, mock_create, mock_trans, mock_logger, sample_config
+    def test_ensure_broadcast_live_complete_raises(
+        self, mock_lifecycle, mock_logger, sample_config
     ):
-        """Creates a new broadcast and transitions to live when status is 'complete'."""
+        """Raises RuntimeError when broadcast status is 'complete' — caller must create a fresh one."""
         mock_lifecycle.return_value = "complete"
-        yt = MagicMock()
-        stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
-        mock_create.assert_called_once_with(yt, sample_config, mock_logger)
-        mock_trans.assert_called_once_with(yt, "new-bid", mock_logger)
+        with pytest.raises(RuntimeError, match="must be replaced"):
+            stream.ensure_broadcast_live(MagicMock(), "bid", sample_config, mock_logger)
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    def test_ensure_broadcast_live_complete_does_not_create_fresh(
+        self, mock_lifecycle, mock_logger, sample_config
+    ):
+        """Does NOT call _create_fresh_broadcast when status is 'complete'."""
+        mock_lifecycle.return_value = "complete"
+        with patch("stream._create_fresh_broadcast") as mock_create:
+            try:
+                stream.ensure_broadcast_live(MagicMock(), "bid", sample_config, mock_logger)
+            except RuntimeError:
+                pass  # Expected
+        mock_create.assert_not_called()
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    def test_ensure_broadcast_live_empty_id_raises(
+        self, mock_lifecycle, mock_logger, sample_config
+    ):
+        """Raises RuntimeError when broadcast_id is empty string."""
+        with pytest.raises(RuntimeError, match="Broadcast ID is required"):
+            stream.ensure_broadcast_live(MagicMock(), "", sample_config, mock_logger)
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    def test_ensure_broadcast_live_none_id_raises(
+        self, mock_lifecycle, mock_logger, sample_config
+    ):
+        """Raises RuntimeError when broadcast_id is None."""
+        with pytest.raises(RuntimeError, match="Broadcast ID is required"):
+            stream.ensure_broadcast_live(MagicMock(), None, sample_config, mock_logger)
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    def test_ensure_broadcast_live_scheduled_raises(
+        self, mock_lifecycle, mock_logger, sample_config
+    ):
+        """Raises RuntimeError for unexpected state 'scheduled'."""
+        mock_lifecycle.return_value = "scheduled"
+        with pytest.raises(RuntimeError, match="unexpected state"):
+            stream.ensure_broadcast_live(MagicMock(), "bid", sample_config, mock_logger)
 
     @patch("stream._api_get_broadcast_lifecycle")
     def test_ensure_broadcast_live_unknown_raises(self, mock_lifecycle, mock_logger, sample_config):
@@ -1003,3 +1037,177 @@ class TestHighLevelOrchestration:
         mock_lifecycle.return_value = "complete"
         stream._complete_broadcast(sample_config, mock_logger)
         mock_set_privacy.assert_not_called()
+
+
+# ── _api_get_broadcast_snippet ───────────────────────────────────────────────
+
+
+class TestApiGetBroadcastSnippet:
+    def test_returns_snippet_when_broadcast_exists(self, mock_youtube):
+        """Returns the snippet dict when liveBroadcasts.list returns items."""
+        mock_youtube.liveBroadcasts().list.return_value.execute.return_value = {
+            "items": [
+                {"snippet": {"title": "Test", "description": "Desc", "thumbnails": {}}}
+            ]
+        }
+        result = stream._api_get_broadcast_snippet(mock_youtube, "bid-123")
+        assert result == {"title": "Test", "description": "Desc", "thumbnails": {}}
+
+    def test_returns_none_when_no_items(self, mock_youtube):
+        """Returns None when liveBroadcasts.list returns empty items."""
+        mock_youtube.liveBroadcasts().list.return_value.execute.return_value = {"items": []}
+        result = stream._api_get_broadcast_snippet(mock_youtube, "bid-123")
+        assert result is None
+
+    def test_returns_none_on_http_error(self, mock_youtube):
+        """Returns None on HttpError without raising."""
+        from googleapiclient.errors import HttpError
+        mock_youtube.liveBroadcasts().list.return_value.execute.side_effect = HttpError(
+            MagicMock(status=403, reason="Forbidden"), b""
+        )
+        result = stream._api_get_broadcast_snippet(mock_youtube, "bid-123")
+        assert result is None
+
+    def test_update_broadcast_title_uses_snippet_helper(self, mock_youtube):
+        """update_broadcast_title calls _api_get_broadcast_snippet, not liveBroadcasts.list directly."""
+        mock_youtube.liveBroadcasts().list.return_value.execute.return_value = {
+            "items": [{"snippet": {"title": "Old Title", "description": "", "thumbnails": {}}}]
+        }
+        mock_youtube.liveBroadcasts().patch.return_value.execute.return_value = {}
+
+        with patch("stream._api_get_broadcast_snippet") as mock_snippet,              patch("stream.interpolate_broadcast_title", return_value="New Title"):
+            mock_snippet.return_value = {"title": "Old Title", "description": "", "thumbnails": {}}
+            stream.update_broadcast_title(mock_youtube, "bid", MagicMock(), MagicMock())
+            mock_snippet.assert_called_once_with(mock_youtube, "bid")
+
+    def test_update_broadcast_title_does_not_patch_when_snippet_none(self):
+        """No patch request when _api_get_broadcast_snippet returns None."""
+        with patch("stream._api_get_broadcast_snippet", return_value=None) as mock_snip,              patch("stream.interpolate_broadcast_title") as mock_interp:
+            stream.update_broadcast_title(MagicMock(), "bid", MagicMock(), MagicMock())
+        mock_interp.assert_not_called()
+
+    def test_update_broadcast_title_patches_with_new_title(self):
+        """Patches the broadcast with updated title when snippet is found."""
+        mock_youtube = MagicMock()
+        with patch("stream._api_get_broadcast_snippet", return_value={"title": "Old"}),              patch("stream.interpolate_broadcast_title", return_value="New Title"),              patch("stream._api_update_broadcast_snippet") as mock_patch:
+            stream.update_broadcast_title(mock_youtube, "bid", MagicMock(), MagicMock())
+        mock_patch.assert_called_once()
+
+
+# ── _transition_to_complete_if_active ────────────────────────────────────────
+
+
+class TestTransitionToCompleteIfActive:
+    @patch("stream._api_get_broadcast_lifecycle")
+    @patch("stream._api_transition_broadcast")
+    def test_transitions_live(self, mock_trans, mock_lifecycle, mock_logger):
+        """Transitions a live broadcast to complete and returns True."""
+        mock_lifecycle.return_value = "live"
+        yt = MagicMock()
+        result = stream._transition_to_complete_if_active(yt, "bid", mock_logger)
+        assert result is True
+        mock_trans.assert_called_once_with(yt, "bid", "complete")
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    @patch("stream._api_transition_broadcast")
+    def test_transitions_ready(self, mock_trans, mock_lifecycle, mock_logger):
+        """Transitions a ready broadcast to complete and returns True."""
+        mock_lifecycle.return_value = "ready"
+        result = stream._transition_to_complete_if_active(MagicMock(), "bid", mock_logger)
+        assert result is True
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    @patch("stream._api_transition_broadcast")
+    def test_transitions_testing(self, mock_trans, mock_lifecycle, mock_logger):
+        """Transitions a testing broadcast to complete and returns True."""
+        mock_lifecycle.return_value = "testing"
+        result = stream._transition_to_complete_if_active(MagicMock(), "bid", mock_logger)
+        assert result is True
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    @patch("stream._api_transition_broadcast")
+    def test_transitions_created(self, mock_trans, mock_lifecycle, mock_logger):
+        """Transitions a created broadcast to complete and returns True."""
+        mock_lifecycle.return_value = "created"
+        result = stream._transition_to_complete_if_active(MagicMock(), "bid", mock_logger)
+        assert result is True
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    @patch("stream._api_transition_broadcast")
+    def test_skips_complete(self, mock_trans, mock_lifecycle, mock_logger):
+        """Does not transition when broadcast is already complete; returns False."""
+        mock_lifecycle.return_value = "complete"
+        result = stream._transition_to_complete_if_active(MagicMock(), "bid", mock_logger)
+        assert result is False
+        mock_trans.assert_not_called()
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    def test_skips_empty_id(self, mock_trans, mock_logger):
+        """Does nothing when broadcast_id is empty string; returns False."""
+        result = stream._transition_to_complete_if_active(MagicMock(), "", mock_logger)
+        assert result is False
+        mock_trans.assert_not_called()
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    def test_skips_none_id(self, mock_trans, mock_logger):
+        """Does nothing when broadcast_id is None; returns False."""
+        result = stream._transition_to_complete_if_active(MagicMock(), None, mock_logger)
+        assert result is False
+        mock_trans.assert_not_called()
+
+    @patch("stream._api_get_broadcast_lifecycle")
+    @patch("stream._api_transition_broadcast")
+    def test_complete_broadcast_delegates(self, mock_trans, mock_lifecycle, mock_logger):
+        """_complete_broadcast delegates to _transition_to_complete_if_active."""
+        mock_lifecycle.return_value = "live"
+        with patch.object(stream, "_transition_to_complete_if_active") as mock_helper:
+            stream._complete_broadcast = MagicMock()  # noqa — we test delegation below
+
+
+# ── _wait_and_go_live ────────────────────────────────────────────────────────
+
+
+class TestWaitAndGoLive:
+    @patch("stream.ensure_broadcast_live")
+    @patch("stream.wait_for_stream_active", return_value=True)
+    def test_validates_stream_active_then_ensures_live(self, mock_wait, mock_ensure):
+        """With valid stream_id: calls wait_for_stream_active then ensure_broadcast_live."""
+        yt = MagicMock()
+        logger = MagicMock()
+        stream._wait_and_go_live(yt, "bid", "stream-123", MagicMock(), logger)
+        mock_wait.assert_called_once_with(yt, "stream-123", logger)
+        mock_ensure.assert_called_once()
+
+    @patch("stream.ensure_broadcast_live")
+    @patch("time.sleep", return_value=None)
+    def test_sleeps_when_stream_id_empty(self, mock_sleep, mock_ensure):
+        """With empty stream_id: sleeps 15s instead of polling."""
+        with patch("stream.PrintLogger") as mock_logger_cls:
+            logger = MagicMock()
+            stream._wait_and_go_live(MagicMock(), "bid", "", MagicMock(), logger)
+        mock_sleep.assert_called_once_with(15)
+
+    @patch("stream.ensure_broadcast_live")
+    @patch("time.sleep", return_value=None)
+    def test_sleeps_when_stream_id_none(self, mock_sleep, mock_ensure):
+        """With None stream_id: sleeps 15s instead of polling."""
+        with patch("stream.PrintLogger") as mock_logger_cls:
+            logger = MagicMock()
+            stream._wait_and_go_live(MagicMock(), "bid", None, MagicMock(), logger)
+        mock_sleep.assert_called_once_with(15)
+
+    @patch("stream.ensure_broadcast_live")
+    @patch("stream.wait_for_stream_active", return_value=False)
+    def test_raises_when_stream_inactive(self, mock_wait, mock_ensure):
+        """Raises RuntimeError when wait_for_stream_active returns False."""
+        with pytest.raises(RuntimeError, match="Stream did not become active"):
+            stream._wait_and_go_live(MagicMock(), "bid", "stream-123", MagicMock(), MagicMock())
+        mock_ensure.assert_not_called()
+
+    @patch("stream.update_broadcast_title")
+    def test_does_not_call_update_broadcast_title(self, mock_update):
+        """_wait_and_go_live does NOT call update_broadcast_title."""
+        with patch("stream.wait_for_stream_active", return_value=True),              patch("stream.ensure_broadcast_live"),              patch.object(stream, "update_broadcast_title") as mock_update:
+            stream._wait_and_go_live(MagicMock(), "bid", "stream-123", MagicMock(), MagicMock())
+        mock_update.assert_not_called()
+

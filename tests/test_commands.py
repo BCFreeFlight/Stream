@@ -244,7 +244,7 @@ class TestCleanupOrphanedBroadcastsSafely:
 
 class TestCreateFreshBroadcast:
     def test_create_fresh_broadcast(self, tmp_script_dir, sample_config, mock_logger):
-        """Creates a new broadcast, binds stream, saves config, returns new ID."""
+        """Creates a new broadcast, binds stream, returns new ID without mutating config."""
         mock_youtube = MagicMock()
 
         with patch("stream.create_broadcast", return_value="new-bcast-456"), \
@@ -256,12 +256,13 @@ class TestCreateFreshBroadcast:
             result = stream._create_fresh_broadcast(mock_youtube, sample_config, mock_logger)
 
         assert result == "new-bcast-456"
-        assert sample_config["youtube"]["broadcastId"] == "new-bcast-456"
+        # Config should NOT be mutated — persistence is caller's responsibility
+        assert sample_config["youtube"]["broadcastId"] == "bcast-123"
+        mock_save.assert_not_called()
         mock_find.assert_called_once_with(mock_youtube, "xxxx-yyyy-zzzz", mock_logger)
         mock_bind.assert_called_once_with(mock_youtube, "new-bcast-456", "stream-resolved", mock_logger)
         mock_cat.assert_called_once_with(mock_youtube, "new-bcast-456", "22", mock_logger)
         mock_embed.assert_called_once_with(mock_youtube, "new-bcast-456", True, mock_logger)
-        mock_save.assert_called_once_with(sample_config)
 
 
 class TestDoStopOrchestration:

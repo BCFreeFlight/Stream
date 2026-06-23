@@ -105,3 +105,44 @@ class TestShowGuide:
         assert "a" in captured.out
         assert "b" in captured.out
         assert "c" in captured.out
+
+
+
+# ── Section Helper Tests ─────────────────────────────────────────────────────
+
+
+class TestPromptGoogleSection:
+    @patch("builtins.input", side_effect=["my-client-id", "my-secret"])
+    def test_returns_tuple(self, mock_input):
+        """Returns (client_id, client_secret) tuple."""
+        result = stream._prompt_google_section({}, MagicMock())
+        assert isinstance(result, tuple) and len(result) == 2
+
+
+class TestPromptStreamSection:
+    @patch("builtins.input", side_effect=["rtsp://cam.local", "copy", "copy", "no"])
+    def test_returns_tuple(self, mock_input):
+        """Returns (rtsp_url, video_codec, audio_codec, mute) tuple."""
+        result = stream._prompt_stream_section({}, MagicMock())
+        assert isinstance(result, tuple) and len(result) == 4
+
+
+class TestPromptYoutubeSection:
+    @patch("builtins.input", side_effect=[
+        "My Stream: {date}", "public", "no", "private", "22", ""
+    ])
+    def test_returns_tuple(self, mock_input):
+        """Returns (title, privacy, enable_dvr, archive_privacy, category_id, broadcast_id) tuple."""
+        result = stream._prompt_youtube_section({}, MagicMock())
+        assert isinstance(result, tuple) and len(result) == 6
+
+
+class TestPromptCronSection:
+    @patch("builtins.input", side_effect=[
+        "yes", "30 6 * * *", "25 18 * * *", "no"
+    ])
+    def test_returns_tuple(self, mock_input):
+        """Returns (enabled, start, stop, auto_update, update) tuple."""
+        result = stream._prompt_cron_section({}, MagicMock())
+        assert isinstance(result, tuple) and len(result) == 5
+
