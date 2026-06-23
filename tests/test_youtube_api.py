@@ -154,6 +154,22 @@ class TestLowLevelAPI:
         result = stream._api_get_video_snippet(mock_youtube, "vid")
         assert result is None
 
+    # -- _api_get_video_status -----------------------------------------------
+
+    def test_api_get_video_status_with_items(self, mock_youtube):
+        """Returns the status dict when items are present."""
+        mock_youtube.videos().list().execute.return_value = {
+            "items": [{"status": {"privacyStatus": "public"}}]
+        }
+        result = stream._api_get_video_status(mock_youtube, "vid")
+        assert result == {"privacyStatus": "public"}
+
+    def test_api_get_video_status_empty(self, mock_youtube):
+        """Returns None when items list is empty."""
+        mock_youtube.videos().list().execute.return_value = {"items": []}
+        result = stream._api_get_video_status(mock_youtube, "vid")
+        assert result is None
+
 
 # ── High-Level Orchestration ────────────────────────────────────────────────
 
@@ -428,6 +444,103 @@ class TestHighLevelOrchestration:
         assert mock_get.call_count == 3
         mock_update.assert_called_once()
         assert mock_sleep.call_count == 2
+
+    # -- update_broadcast_title ----------------------------------------------
+
+    @patch("stream._api_update_broadcast_snippet")
+    def test_update_broadcast_title_happy_path(self, mock_update, sample_config, mock_logger):
+        """Fetches snippet, sets title with interpolated date, calls update."""
+        sample_config["youtube"]["broadcastTitle"] = "Test: {date}"
+        today = datetime.date.today().isoformat()
+        mock_youtube = MagicMock()
+        mock_youtube.liveBroadcasts().list().execute.return_value = {
+            "items": [{"snippet": {"title": "Old Title"}}]
+        }
+        stream.update_broadcast_title(mock_youtube, "bid", sample_config, mock_logger)
+        # _api_update_broadcast_snippet is called with positional args: youtube, bid, snippet
+        mock_update.assert_called_once()
+        _, kwargs = mock_update.call_args
+        args = mock_update.call_args[0]
+        assert args[2]["title"] == f"Test: {today}"
+        mock_logger.info.assert_called_with(f'Broadcast title updated: "Test: {today}"')
+
+    @patch("stream._api_update_broadcast_snippet")
+    def test_update_broadcast_title_empty_items(self, mock_update, sample_config, mock_logger):
+        """Logs warning and returns without updating when no broadcast snippet is found."""
+        sample_config["youtube"]["broadcastTitle"] = "Test: {date}"
+        mock_youtube = MagicMock()
+        mock_youtube.liveBroadcasts().list().execute.return_value = {"items": []}
+        stream.update_broadcast_title(mock_youtube, "bid", sample_config, mock_logger)
+        mock_update.assert_not_called()
+        mock_logger.warn.assert_called_once()
+
+    @patch("stream._api_update_broadcast_snippet")
+    def test_update_broadcast_title_http_error(self, mock_update, sample_config, mock_logger):
+        """HttpError is caught and logged as a warning, no exception raised."""
+        from googleapiclient.errors import HttpError
+
+        sample_config["youtube"]["broadcastTitle"] = "Test: {date}"
+        mock_youtube = MagicMock()
+        mock_youtube.liveBroadcasts().list().execute.side_effect = HttpError(
+            resp=MagicMock(status=400), content=b"error"
+        )
+        stream.update_broadcast_title(mock_youtube, "bid", sample_config, mock_logger)
+        mock_update.assert_not_called()
+        mock_logger.warn.assert_called_once()
+
+    # -- _attempt_testing_transition -----------------------------------------
+
+    @patch("stream._poll_until_lifecycle_status")
+    def test_attempt_testing_transition_http_error(self, mock_poll, sample_config, mock_logger):
+        """HttpError from _api_transition_broadcast is caught and logged as a warning."""
+        from googleapiclient.errors import HttpError
+
+        mock_youtube = MagicMock()
+        mock_youtube.liveBroadcasts().transition.side_effect = HttpError(
+            resp=MagicMock(status=500), content=b"transition failed"
+        )
+        stream._attempt_testing_transition(mock_youtube, "bid", mock_logger)
+        mock_poll.assert_not_called()
+        mock_logger.warn.assert_called_once()
+
+    # -- _poll_until_lifecycle_status ----------------------------------------
+
+    @patch("stream.time.sleep")
+    def test_poll_until_lifecycle_status_immediate(self, mock_sleep, sample_config, mock_logger):
+        """Returns on the first check when target status is already present."""
+        mock_youtube = MagicMock()
+        mock_youtube.liveBroadcasts().list().execute.return_value = {
+            "items": [{"status": {"lifeCycleStatus": "testing"}}]
+        }
+        stream._poll_until_lifecycle_status(mock_youtube, "bid", "testing", mock_logger)
+        assert mock_sleep.call_count == 0
+
+    @patch("stream.time.sleep")
+    def test_poll_until_lifecycle_status_reaches_target(self, mock_sleep, sample_config, mock_logger):
+        """Sleeps between polls and returns when target status is reached after N iterations."""
+        mock_youtube = MagicMock()
+        # First poll returns 'ready', second poll returns 'testing' (target)
+        mock_youtube.liveBroadcasts().list().execute.side_effect = [
+            {"items": [{"status": {"lifeCycleStatus": "ready"}}]},
+            {"items": [{"status": {"lifeCycleStatus": "testing"}}]},
+        ]
+        stream._poll_until_lifecycle_status(mock_youtube, "bid", "testing", mock_logger)
+        assert mock_sleep.call_count == 1
+
+    @patch("stream.time.sleep")
+    def test_poll_until_lifecycle_status_exhausts_iterations(self, mock_sleep):
+        """Exhausts all configured iterations without raising an error."""
+        # Patch the range to only iterate 3 times so test runs fast.
+        # Sleep is called on every iteration because target never matches,
+        # so call_count equals the number of iterations.
+        with patch("stream.range", return_value=range(3)):
+            mock_youtube = MagicMock()
+            # Never matches target "testing"
+            mock_youtube.liveBroadcasts().list().execute.return_value = {
+                "items": [{"status": {"lifeCycleStatus": "ready"}}]
+            }
+            stream._poll_until_lifecycle_status(mock_youtube, "bid", "testing", MagicMock())
+            assert mock_sleep.call_count == 3
 
     # -- find_stream_resource_by_key -----------------------------------------
 
