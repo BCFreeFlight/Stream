@@ -100,7 +100,7 @@ except ModuleNotFoundError:
 
 # ── Constants & Types ────────────────────────────────────────────────────────
 
-__version__ = "dev"
+__version__ = "v0.1.20"
 
 GITHUB_REPO = "BCFreeFlight/Stream"
 
@@ -158,8 +158,6 @@ CONFIG_COMMENTS = {
     "[cron]": "# Cron schedule for automatic start/stop (crontab expressions)",
     "autoUpdate": "# Automatically check for and install updates on the update cron schedule",
     "update": "# Cron schedule for automatic update checks (e.g. daily at midnight)",
-    "[update]": "# Automatic update behaviour — managed by --roll-back and --update",
-    "skippedVersion": '# Version skipped by --roll-back; --update ignores releases <= this value (clear with --set-property update.skippedVersion "")',
 }
 
 CONFIG_DEFAULTS = {
@@ -185,8 +183,6 @@ CONFIG_DEFAULTS = {
         "categoryId": "22",
         "enableMonitorStream": False,
         "embeddable": True,
-        "enableDvr": False,
-        "archivePrivacy": "private",
         "broadcastId": "",
         "streamURL": "",
         "backupStreamUrl": "",
@@ -198,9 +194,6 @@ CONFIG_DEFAULTS = {
         "stop": "25 18 1-31 4-10 *",
         "autoUpdate": False,
         "update": "0 0 * * *",
-    },
-    "update": {
-        "skippedVersion": "",
     },
 }
 
@@ -514,7 +507,7 @@ def build_youtube_service(creds):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _api_insert_broadcast(youtube, title, privacy, enable_monitor, enable_dvr):
+def _api_insert_broadcast(youtube, title, privacy, enable_monitor):
     """Call liveBroadcasts.insert and return the API response."""
     body = {
         "snippet": {
@@ -533,7 +526,6 @@ def _api_insert_broadcast(youtube, title, privacy, enable_monitor, enable_dvr):
             },
             "enableAutoStart": False,
             "enableAutoStop": False,
-            "enableDvr": enable_dvr,
         },
     }
     return (
@@ -688,15 +680,14 @@ def create_broadcast(youtube, config, logger):
     privacy = config["youtube"]["privacy"]
     enable_monitor = config["youtube"]["enableMonitorStream"]
     embeddable = config["youtube"]["embeddable"]
-    enable_dvr = config["youtube"]["enableDvr"]
 
-    logger.info(f'Creating broadcast: title="{title}", privacy={privacy}, embeddable={embeddable}, enableDvr={enable_dvr}')
-    resp = _api_insert_broadcast(youtube, title, privacy, enable_monitor, enable_dvr)
+    logger.info(f'Creating broadcast: title="{title}", privacy={privacy}, embeddable={embeddable}')
+    resp = _api_insert_broadcast(youtube, title, privacy, enable_monitor)
     broadcast_id = resp["id"]
     logger.info(f"Broadcast created: {broadcast_id}")
     logger.info(f"Stable stream URL: https://youtube.com/live/{broadcast_id}")
     if not embeddable:
-        apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, enable_dvr, logger)
+        apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, logger)
     return broadcast_id
 
 
@@ -737,21 +728,20 @@ def apply_broadcast_category(youtube, broadcast_id, category_id, logger):
         logger.warn(f"Could not set video category: {exc}")
 
 
-def apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, enable_dvr, logger):
-    """Set the enableEmbed and enableDvr flags on the broadcast via liveBroadcasts.update."""
+def apply_broadcast_embeddable(youtube, broadcast_id, embeddable, enable_monitor, logger):
+    """Set the enableEmbed flag on the broadcast via liveBroadcasts.update."""
     try:
         _api_update_broadcast_content_details(
             youtube,
             broadcast_id,
             {
                 "enableEmbed": embeddable,
-                "enableDvr": enable_dvr,
                 "monitorStream": {"enableMonitorStream": enable_monitor},
             },
         )
-        logger.debug(f"Broadcast embeddable set to {embeddable}, enableDvr set to {enable_dvr}")
+        logger.debug(f"Broadcast embeddable set to {embeddable}")
     except HttpError as exc:
-        logger.warn(f"Could not set broadcast content details: {exc}")
+        logger.warn(f"Could not set broadcast embeddable: {exc}")
 
 
 def apply_video_embeddable(youtube, broadcast_id, embeddable, logger):
@@ -1475,20 +1465,6 @@ def prompt_all_config_values(res, existing=None):
         default=defaults["privacy"],
         validator=privacy_validator,
     )
-    existing_dvr = _get_nested(ex, "youtube", "enableDvr", default=None)
-    if existing_dvr is not None:
-        enable_dvr = existing_dvr
-    else:
-        dvr_str = _prompt(
-            prompts["enableDvr"], default=defaults["enableDvr"], validator=yes_no_validator
-        )
-        enable_dvr = dvr_str.lower() == "yes"
-    archive_privacy = _smart_prompt(
-        prompts["archivePrivacy"],
-        _get_nested(ex, "youtube", "archivePrivacy"),
-        default=defaults["archivePrivacy"],
-        validator=privacy_validator,
-    )
     category_id = _smart_prompt(
         prompts["categoryId"],
         _get_nested(ex, "youtube", "categoryId"),
@@ -1558,8 +1534,6 @@ def prompt_all_config_values(res, existing=None):
                 ex, "youtube", "enableMonitorStream", default=False
             ),
             "embeddable": _get_nested(ex, "youtube", "embeddable", default=True),
-            "enableDvr": enable_dvr,
-            "archivePrivacy": archive_privacy.lower() if isinstance(archive_privacy, str) else archive_privacy,
             "broadcastId": broadcast_id,
             "streamURL": _get_nested(ex, "youtube", "streamURL"),
             "backupStreamUrl": _get_nested(ex, "youtube", "backupStreamUrl"),
@@ -2063,15 +2037,6 @@ def _cleanup_stop_files(config):
     cleanup_stop_sentinel(config)
 
 
-def _set_archive_privacy(youtube, broadcast_id, archive_privacy, logger):
-    """Set the privacy status on an archived broadcast's video resource."""
-    try:
-        _api_update_video_status(youtube, broadcast_id, {"privacyStatus": archive_privacy})
-        logger.info(f"Archived broadcast {broadcast_id} set to {archive_privacy}")
-    except Exception as exc:
-        logger.warn(f"Could not set archive privacy on {broadcast_id}: {exc}")
-
-
 def _complete_broadcast(config, logger):
     """Transition the YouTube broadcast to complete so it is archived as a VOD."""
     broadcast_id = config["youtube"].get("broadcastId", "")
@@ -2089,8 +2054,6 @@ def _complete_broadcast(config, logger):
         if status == "live":
             _api_transition_broadcast(youtube, broadcast_id, "complete")
             logger.info(f"Broadcast {broadcast_id} transitioned to complete (archived)")
-            archive_privacy = config["youtube"].get("archivePrivacy", "private")
-            _set_archive_privacy(youtube, broadcast_id, archive_privacy, logger)
         elif status == "complete":
             logger.debug("Broadcast is already complete")
         else:
@@ -2206,19 +2169,6 @@ def _backup_current_files():
     return backup_path
 
 
-def _parse_version(tag):
-    """Parse a 'vX.Y.Z' tag into an integer tuple for comparison. Returns (0, 0, 0) on failure."""
-    try:
-        return tuple(int(x) for x in tag.lstrip("v").split("."))
-    except (ValueError, AttributeError):
-        return (0, 0, 0)
-
-
-def _version_gt(a, b):
-    """Return True if version tag a is strictly greater than version tag b."""
-    return _parse_version(a) > _parse_version(b)
-
-
 def _get_latest_release_tag():
     """Query the GitHub API for the latest release tag. Returns None on failure."""
     import urllib.request
@@ -2249,11 +2199,6 @@ def do_update():
     res = load_resources()
     msgs = res.get("update", {})
 
-    try:
-        config = load_config()
-    except Exception:
-        config = {}
-
     print(f"Current version: {__version__}")
 
     latest = _get_latest_release_tag()
@@ -2265,14 +2210,6 @@ def do_update():
 
     if latest == __version__:
         print(msgs.get("already_latest", "Already running the latest version."))
-        return
-
-    skipped = config.get("update", {}).get("skippedVersion", "")
-    if skipped and not _version_gt(latest, skipped):
-        print(msgs.get("skipped_version",
-              "Skipping {version} — rolled back from this release. "
-              "Will update automatically once a release newer than {skipped} is available.").format(
-                  version=latest, skipped=skipped))
         return
 
     backup_path = _backup_current_files()
@@ -2293,19 +2230,6 @@ def do_update():
     print(msgs.get("success",
           "Updated to {version}. Restart the script to use the new version.").format(
               version=latest))
-
-    if skipped:
-        try:
-            config.setdefault("update", {})["skippedVersion"] = ""
-            save_config(config)
-        except Exception:
-            pass
-
-    try:
-        if config.get("cron", {}).get("enabled"):
-            register_cron_entries(config)
-    except Exception:
-        pass
 
 
 # ── --roll-back Command ──────────────────────────────────────────────────────
@@ -2391,23 +2315,11 @@ def do_rollback(version=None):
             print(msgs.get("cancelled", "Roll-back cancelled."))
             return
 
-    rolled_back_from = __version__
     restored_version = _extract_version_from_backup(backup)
     print(msgs.get("restoring", "Restoring from {version}...").format(version=restored_version))
     _restore_from_backup(backup)
     print(msgs.get("success", "Rolled back to {version}. Restart the script to use the restored version.").format(
         version=restored_version))
-
-    if rolled_back_from and rolled_back_from != "dev":
-        try:
-            cfg = load_config()
-            cfg.setdefault("update", {})["skippedVersion"] = rolled_back_from
-            save_config(cfg)
-            print(msgs.get("skipped_version_set",
-                  "--update will skip {version} until a newer release is available.").format(
-                      version=rolled_back_from))
-        except Exception:
-            pass
 
 
 # ── --set-property Command ───────────────────────────────────────────────────
