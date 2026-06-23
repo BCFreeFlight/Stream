@@ -1,10 +1,28 @@
 """Tests for the dependency bootstrap (_pip_install)."""
 
+import importlib
 import subprocess
 import sys
 from unittest.mock import patch
 
+import pytest
 import stream
+
+
+def _restore_stream_module(original):
+    """Restore ``sys.modules['stream']`` to the object captured before a fresh import.
+
+    These tests delete ``stream`` from ``sys.modules`` and re-import it to
+    exercise the import-time tomllib/tomli fallback. Leaving the re-imported
+    object in place would desync ``sys.modules['stream']`` from the
+    session-scoped ``stream`` fixture, so later ``patch("stream.*")`` calls would
+    patch a different object than the tests invoke — silently no-opping their
+    mocks (and, for the OAuth path, firing the real auth flow).
+    """
+    if original is not None:
+        sys.modules["stream"] = original
+    else:
+        sys.modules.pop("stream", None)
 
 
 class TestPipInstall:
@@ -76,3 +94,117 @@ class TestPipInstall:
                 pass
             else:
                 raise AssertionError("Expected CalledProcessError to propagate")
+
+    def test_invalidate_caches_called_when_package_installed(self):
+        """importlib.invalidate_caches() is called exactly once after _pip_install."""
+        with patch("stream._can_import", return_value=False), \
+             patch("stream._pip_install") as mock_pip, \
+             patch("importlib.invalidate_caches") as mock_invalidate:
+            stream._ensure_dependencies()
+
+        mock_pip.assert_called_once()
+        mock_invalidate.assert_called_once()
+
+    def test_invalidate_caches_not_called_when_no_missing_packages(self):
+        """invalidate_caches is NOT called when all packages are already present."""
+        with patch("stream._can_import", return_value=True), \
+             patch("stream._pip_install") as mock_pip, \
+             patch("importlib.invalidate_caches") as mock_invalidate:
+            stream._ensure_dependencies()
+
+        mock_pip.assert_not_called()
+        mock_invalidate.assert_not_called()
+
+    def test_invalidate_caches_called_once_with_multiple_missing(self):
+        """invalidate_caches is called exactly once even when multiple packages are installed."""
+        with patch("stream._can_import", side_effect=lambda n: False if n in ("requests", "dotenv") else True), \
+             patch("stream._pip_install") as mock_pip, \
+             patch("importlib.invalidate_caches") as mock_invalidate:
+            stream._ensure_dependencies()
+
+        # _pip_install should have been called with both missing packages
+        assert mock_pip.call_count == 1
+        call_args = mock_pip.call_args[0][0]
+        assert "requests" in call_args and "python-dotenv" in call_args
+        # invalidate_caches should be called exactly once, not per-package
+        mock_invalidate.assert_called_once()
+
+    def test_invalidate_caches_after_install(self):
+        """invalidate_caches is called after _pip_install completes, not before."""
+        order = []
+
+        def track_pip(*args, **kwargs):
+            order.append("pip_install")
+
+        with patch("stream._can_import", return_value=False), \
+             patch("stream._pip_install", side_effect=track_pip), \
+             patch("importlib.invalidate_caches") as mock_invalidate:
+
+            def track_invalidate():
+                order.append("invalidate_caches")
+
+            mock_invalidate.side_effect = track_invalidate
+            stream._ensure_dependencies()
+
+        assert order == ["pip_install", "invalidate_caches"]
+
+    def test_tomli_fallback_when_tomllib_unavailable(self):
+        """stream.tomllib resolves to tomli when tomllib is not available (Python < 3.11)."""
+        original_stream = sys.modules.get("stream")
+        # Remove stream and tomllib from sys.modules so we get a fresh import
+        for mod in list(sys.modules.keys()):
+            if mod == "stream" or mod.startswith("stream."):
+                del sys.modules[mod]
+
+        import tomli as _tomli_module  # keep a reference before patching
+        real_import = __import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "tomllib":
+                raise ModuleNotFoundError(
+                    f"No module named '{name}'"
+                )
+            return real_import(name, *args, **kwargs)
+
+        try:
+            with patch("builtins.__import__", side_effect=fake_import):
+                # Also remove tomllib from sys.modules so the try block actually fails
+                if "tomllib" in sys.modules:
+                    del sys.modules["tomllib"]
+                import stream as fresh_stream
+
+            assert fresh_stream.tomllib is _tomli_module
+            assert fresh_stream.tomllib.__name__ == "tomli"
+        finally:
+            _restore_stream_module(original_stream)
+
+    def test_tomllib_used_when_available(self):
+        """stream.tomllib resolves to tomllib on Python >= 3.11 (no fallback triggered)."""
+        assert stream.tomllib.__name__ == "tomllib"
+
+    def test_module_not_found_when_neither_available(self):
+        """ModuleNotFoundError propagates when both tomllib and tomli are unavailable."""
+        original_stream = sys.modules.get("stream")
+        for mod in list(sys.modules.keys()):
+            if mod == "stream" or mod.startswith("stream."):
+                del sys.modules[mod]
+
+        real_import = __import__
+
+        def fake_import_both_missing(name, *args, **kwargs):
+            if name in ("tomllib", "tomli"):
+                raise ModuleNotFoundError(
+                    f"No module named '{name}'"
+                )
+            return real_import(name, *args, **kwargs)
+
+        try:
+            with patch("builtins.__import__", side_effect=fake_import_both_missing):
+                if "tomllib" in sys.modules:
+                    del sys.modules["tomllib"]
+                if "tomli" in sys.modules:
+                    del sys.modules["tomli"]
+                with pytest.raises(ModuleNotFoundError):
+                    import stream as broken_stream  # noqa: F401
+        finally:
+            _restore_stream_module(original_stream)
