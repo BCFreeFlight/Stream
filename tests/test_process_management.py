@@ -267,6 +267,20 @@ class TestSignalHandler:
         assert sentinel_path.exists()
 
 
+class TestWaitForProcessExit:
+    @patch("stream.time.sleep")
+    def test_timeout_warning(self, mock_sleep, stream, mock_logger):
+        """A warning is logged when the process does not exit within timeout."""
+        # Mock: process never exits (always returns True)
+        with patch("stream._is_process_running", return_value=True):
+            stream._wait_for_process_exit(42, 1, mock_logger)
+
+        # Verify: logger.warn was called with expected message
+        mock_logger.warn.assert_called_once_with(
+            "Process 42 did not exit within 1s"
+        )
+
+
 class TestRegisterSignalHandlers:
     @patch("stream.signal.signal")
     def test_register_signal_handlers(self, mock_signal, stream):
