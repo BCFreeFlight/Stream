@@ -88,8 +88,9 @@ Secrets only. Never share or commit.
 
 `--install` sets `terminal` by probing PATH in order:
 
-```
-gnome-terminal → xterm → konsole → xfce4-terminal → (fallback) xterm
+```mermaid
+flowchart LR
+    A[gnome-terminal] --> B[xterm] --> C[konsole] --> D[xfce4-terminal] --> E["(fallback) xterm"]
 ```
 
 The cron line format differs per emulator; see [scheduling](scheduling.md#terminal-handling).

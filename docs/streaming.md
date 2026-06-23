@@ -39,16 +39,20 @@ Camera passwords often contain URI-reserved characters (`$ @ / # ? :`) that brea
 
 `_run_stream_loop` runs indefinitely until stopped:
 
-```
-attempt = 0
-loop:
-   connect (alternate RTMP by attempt parity)
-   if stop requested: break
-   stream until ffmpeg exits
-   on error: log + clean up ffmpeg
-   if stop requested: break
-   wait retryDelaySecs; if stop requested during wait: break
-   attempt += 1
+```mermaid
+flowchart TD
+    A[attempt = 0] --> B[connect<br/>alternate RTMP by attempt parity]
+    B --> C{stop requested?}
+    C -->|yes| Z([exit])
+    C -->|no| D[stream until ffmpeg exits]
+    D --> E[on error: log + clean up ffmpeg]
+    E --> F{stop requested?}
+    F -->|yes| Z
+    F -->|no| G[wait retryDelaySecs]
+    G --> H{stop requested<br/>during wait?}
+    H -->|yes| Z
+    H -->|no| I[attempt += 1]
+    I --> B
 ```
 
 - **No max retry count.** Runs until `--stop` or a signal.

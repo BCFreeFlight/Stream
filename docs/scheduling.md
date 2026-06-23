@@ -33,10 +33,13 @@ Start lines are prefixed with `DISPLAY=:0` so cron can reach the X session.
 
 Crash/reboot recovery, registered as the `@reboot` entry:
 
-```
-already running?  → no-op
-inside window?    → delegate to --start
-outside window?   → exit cleanly
+```mermaid
+flowchart TD
+    A([--recover]) --> B{already running?}
+    B -->|yes| C[no-op]
+    B -->|no| D{inside window?}
+    D -->|yes| E[delegate to --start]
+    D -->|no| F[exit cleanly]
 ```
 
 The window check (`is_in_stream_window`) compares the most recent fire times of `cron.start` vs `cron.stop` using `croniter`: if start fired more recently than stop, we are inside the window. This reuses real cron semantics (including day/month ranges) instead of reimplementing them, and adds a 1-second epsilon so the exact start second counts as inside. See [ADR-0016](adr/0016-reboot-crash-recovery.md).
