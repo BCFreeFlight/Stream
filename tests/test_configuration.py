@@ -253,6 +253,14 @@ class TestTryLoadExistingConfig:
         result = stream._try_load_existing_config()
         assert result is None
 
+    def test_try_load_existing_config_corrupt_json(self, tmp_script_dir):
+        """Returns None when config.json exists but contains invalid JSON."""
+        config_path = tmp_script_dir / "config.json"
+        config_path.write_text("{invalid json!!!")
+
+        result = stream._try_load_existing_config()
+        assert result is None
+
 
 # ── _deep_merge_defaults ─────────────────────────────────────────────────────
 
