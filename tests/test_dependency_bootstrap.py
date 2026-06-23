@@ -9,6 +9,22 @@ import pytest
 import stream
 
 
+def _restore_stream_module(original):
+    """Restore ``sys.modules['stream']`` to the object captured before a fresh import.
+
+    These tests delete ``stream`` from ``sys.modules`` and re-import it to
+    exercise the import-time tomllib/tomli fallback. Leaving the re-imported
+    object in place would desync ``sys.modules['stream']`` from the
+    session-scoped ``stream`` fixture, so later ``patch("stream.*")`` calls would
+    patch a different object than the tests invoke — silently no-opping their
+    mocks (and, for the OAuth path, firing the real auth flow).
+    """
+    if original is not None:
+        sys.modules["stream"] = original
+    else:
+        sys.modules.pop("stream", None)
+
+
 class TestPipInstall:
     def test_plain_install_is_tried_first(self):
         """_pip_install starts with a plain pip install (no scope flags)."""
@@ -134,6 +150,7 @@ class TestPipInstall:
 
     def test_tomli_fallback_when_tomllib_unavailable(self):
         """stream.tomllib resolves to tomli when tomllib is not available (Python < 3.11)."""
+        original_stream = sys.modules.get("stream")
         # Remove stream and tomllib from sys.modules so we get a fresh import
         for mod in list(sys.modules.keys()):
             if mod == "stream" or mod.startswith("stream."):
@@ -149,14 +166,17 @@ class TestPipInstall:
                 )
             return real_import(name, *args, **kwargs)
 
-        with patch("builtins.__import__", side_effect=fake_import):
-            # Also remove tomllib from sys.modules so the try block actually fails
-            if "tomllib" in sys.modules:
-                del sys.modules["tomllib"]
-            import stream as fresh_stream
+        try:
+            with patch("builtins.__import__", side_effect=fake_import):
+                # Also remove tomllib from sys.modules so the try block actually fails
+                if "tomllib" in sys.modules:
+                    del sys.modules["tomllib"]
+                import stream as fresh_stream
 
-        assert fresh_stream.tomllib is _tomli_module
-        assert fresh_stream.tomllib.__name__ == "tomli"
+            assert fresh_stream.tomllib is _tomli_module
+            assert fresh_stream.tomllib.__name__ == "tomli"
+        finally:
+            _restore_stream_module(original_stream)
 
     def test_tomllib_used_when_available(self):
         """stream.tomllib resolves to tomllib on Python >= 3.11 (no fallback triggered)."""
@@ -164,6 +184,7 @@ class TestPipInstall:
 
     def test_module_not_found_when_neither_available(self):
         """ModuleNotFoundError propagates when both tomllib and tomli are unavailable."""
+        original_stream = sys.modules.get("stream")
         for mod in list(sys.modules.keys()):
             if mod == "stream" or mod.startswith("stream."):
                 del sys.modules[mod]
@@ -177,13 +198,13 @@ class TestPipInstall:
                 )
             return real_import(name, *args, **kwargs)
 
-        with patch("builtins.__import__", side_effect=fake_import_both_missing):
-            if "tomllib" in sys.modules:
-                del sys.modules["tomllib"]
-            if "tomli" in sys.modules:
-                del sys.modules["tomli"]
-            with pytest.raises(ModuleNotFoundError):
-                import stream as broken_stream  # noqa: F401
-
-        # Restore normal imports by re-importing stream
-        import stream as restored_stream  # noqa: F401
+        try:
+            with patch("builtins.__import__", side_effect=fake_import_both_missing):
+                if "tomllib" in sys.modules:
+                    del sys.modules["tomllib"]
+                if "tomli" in sys.modules:
+                    del sys.modules["tomli"]
+                with pytest.raises(ModuleNotFoundError):
+                    import stream as broken_stream  # noqa: F401
+        finally:
+            _restore_stream_module(original_stream)

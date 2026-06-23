@@ -3,7 +3,7 @@
 import copy
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 try:
     import tomllib
@@ -21,6 +21,32 @@ def stream():
     import stream as _stream
 
     return _stream
+
+
+# ── OAuth Safety Net ─────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def block_real_oauth():
+    """Make it impossible for the interactive OAuth flow to fire during tests.
+
+    Patches ``run_local_server`` on the real ``google_auth_oauthlib`` class
+    (shared by every ``stream`` module object), so no test can open a browser
+    auth prompt or block on the local redirect server. Tests that exercise the
+    OAuth path already mock it explicitly; this is defense in depth — if a mock
+    is ever misapplied (e.g. patched onto the wrong module object), the flow
+    fails loudly here instead of hanging CI forever.
+    """
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    with patch.object(
+        InstalledAppFlow,
+        "run_local_server",
+        side_effect=RuntimeError(
+            "Real OAuth flow attempted during tests — it must be mocked"
+        ),
+    ):
+        yield
 
 
 # ── Global State Reset ───────────────────────────────────────────────────────
