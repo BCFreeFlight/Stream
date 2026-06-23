@@ -1,8 +1,10 @@
 """Tests for _validate_youtube_config, _connect_to_broadcast, main() dispatch,
 do_start/do_stop orchestration."""
 
+import signal
+
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, ANY
 
 import stream
 
@@ -278,7 +280,7 @@ class TestDoStopOrchestration:
 
         with patch("stream.load_config", side_effect=track("load_config")), \
              patch("stream.load_env", side_effect=track("load_env")), \
-             patch("stream.create_logger", side_effect=track("create_logger")), \
+             patch("stream.create_logger", side_effect=track("create_logger")) as mock_create, \
              patch("stream._signal_running_process", side_effect=track("signal")), \
              patch("stream._complete_broadcast", side_effect=track("complete")), \
              patch("stream._cleanup_stop_files", side_effect=track("cleanup")):
@@ -290,6 +292,18 @@ class TestDoStopOrchestration:
         # Verify the "Clean shutdown" message was logged
         info_messages = [str(c) for c in mock_logger.info.call_args_list]
         assert any("Clean shutdown" in msg for msg in info_messages)
+
+    def test_do_stop_logger_close(self, sample_config):
+        """do_stop calls logger.close() as the final step after all orchestration."""
+        with patch("stream.load_config", return_value=sample_config), \
+             patch("stream.load_env"), \
+             patch("stream.create_logger") as mock_create, \
+             patch("stream._signal_running_process"), \
+             patch("stream._complete_broadcast"), \
+             patch("stream._cleanup_stop_files"):
+            stream.do_stop()
+
+        mock_create.return_value.close.assert_called_once()
 
 
 # ── do_start orchestration ─────────────────────────────────────────────────
@@ -485,3 +499,277 @@ class TestStreamUntilExitTitleUpdate:
         assert title_call_args[0][1] == "bcast-fresh", (
             "update_broadcast_title should use the new broadcast ID, not bcast-old"
         )
+
+
+# ── _prepare_stream_process ordering ────────────────────────────────────────
+
+
+class TestPrepareStreamProcessOrdering:
+    def test_prepare_stream_process_ordering(self, sample_config, mock_logger):
+        """_prepare_stream_process calls dependencies in the correct order."""
+        call_order = []
+
+        def track(name):
+            def side_effect(*args, **kwargs):
+                call_order.append(name)
+            return side_effect
+
+        with patch("stream.cleanup_stop_sentinel", side_effect=track("cleanup_stop")), \
+             patch("stream.kill_existing_process", side_effect=track("kill")), \
+             patch("stream.write_pid_file", side_effect=track("pid")), \
+             patch.object(mock_logger, "cleanup_old_logs", side_effect=track("logs")):
+            stream._prepare_stream_process(sample_config, mock_logger)
+
+        assert call_order == ["cleanup_stop", "kill", "pid", "logs"]
+
+
+# ── _cleanup_ffmpeg ─────────────────────────────────────────────────────────
+
+
+class TestCleanupFfmpeg:
+    def test_cleanup_ffmpeg_running(self, reset_globals):
+        """When _ffmpeg_process is running, terminate() + wait() are called."""
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # still running
+        stream._ffmpeg_process = mock_proc
+
+        stream._cleanup_ffmpeg()
+
+        mock_proc.terminate.assert_called_once()
+        mock_proc.wait.assert_called_once()
+        assert stream._ffmpeg_process is None
+
+    def test_cleanup_ffmpeg_none(self, reset_globals):
+        """When _ffmpeg_process is None, cleanup is a no-op."""
+        stream._ffmpeg_process = None
+
+        stream._cleanup_ffmpeg()
+
+        assert stream._ffmpeg_process is None
+
+
+# ── _wait_before_retry ──────────────────────────────────────────────────────
+
+
+class TestWaitBeforeRetry:
+    def test_wait_before_retry_stop_requested(self, sample_config):
+        """Returns False when stop is requested after sleeping."""
+        stream._stop_requested = True
+
+        result = stream._wait_before_retry(sample_config, MagicMock())
+
+        assert result is False
+
+
+# ── _run_stream_loop ────────────────────────────────────────────────────────
+
+
+class TestRunStreamLoop:
+    def test_run_stream_loop_exception(self, sample_config):
+        """Exception during stream pass logs warning and retries."""
+        with patch("stream._connect_to_broadcast") as mock_connect, \
+             patch("stream._stream_until_exit", side_effect=Exception("ffmpeg error")), \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, False]) as mock_wait, \
+             patch("stream._cleanup_ffmpeg"), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        # Should have tried twice (initial + one retry)
+        assert mock_connect.call_count == 2
+
+    def test_run_stream_loop_retry_break(self, sample_config):
+        """Loop exits when _wait_before_retry returns False."""
+        with patch("stream._connect_to_broadcast") as mock_connect, \
+             patch("stream._stream_until_exit"), \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[False]), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        # Only one iteration — _wait_before_retry returned False after first pass
+        mock_connect.assert_called_once()
+
+    def test_run_stream_loop_alternating_urls(self, sample_config):
+        """Attempt counter increments and RTMP URLs alternate on retries."""
+        with patch("stream._connect_to_broadcast") as mock_connect, \
+             patch("stream._stream_until_exit"), \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, True, False]), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        # Three calls: attempt 0 (primary), attempt 1 (backup), attempt 2 (primary)
+        calls = mock_connect.call_args_list
+        assert len(calls) == 3
+
+    def test_run_stream_loop_success(self, sample_config):
+        """Single attempt succeeds; loop exits when stop is requested after pass."""
+        stream._stop_requested = True
+
+        with patch("stream._connect_to_broadcast") as mock_connect, \
+             patch("stream._stream_until_exit") as mock_stream, \
+             patch("stream.is_stop_requested", side_effect=[False, True]), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        mock_connect.assert_called_once_with(
+            sample_config, ANY, 0
+        )
+        mock_stream.assert_called_once()
+
+
+# ── _stream_until_exit ──────────────────────────────────────────────────────
+
+
+class TestStreamUntilExit:
+    def test_stream_until_exit_not_active(self, sample_config):
+        """Stream not active: ffmpeg terminated, thread joined, RuntimeError raised."""
+        mock_process = MagicMock()
+        mock_thread = MagicMock()
+
+        with patch("stream.build_ffmpeg_command", return_value=[]), \
+             patch("stream.start_ffmpeg_process", return_value=mock_process), \
+             patch("stream.relay_ffmpeg_output", return_value=mock_thread), \
+             patch("stream.wait_for_stream_active", return_value=False):
+            with pytest.raises(RuntimeError, match="Stream did not become active"):
+                stream._stream_until_exit(
+                    sample_config, MagicMock(), MagicMock(spec=stream.BroadcastContext)
+                )
+
+        mock_process.terminate.assert_called_once()
+        mock_process.wait.assert_called_once()
+        mock_thread.join.assert_called_once_with(timeout=5)
+
+    def test_stream_until_exit_empty_stream_id(self, sample_config):
+        """Empty stream_id: 15-second sleep instead of polling YouTube."""
+        mock_process = MagicMock()
+        mock_thread = MagicMock()
+
+        ctx = MagicMock(spec=stream.BroadcastContext)
+        ctx.stream_id = ""
+        ctx.broadcast_id = "bcast-123"
+
+        with patch("stream.build_ffmpeg_command", return_value=[]), \
+             patch("stream.start_ffmpeg_process", return_value=mock_process), \
+             patch("stream.relay_ffmpeg_output", return_value=mock_thread), \
+             patch("stream.ensure_broadcast_live"), \
+             patch.object(stream.time, "sleep") as mock_sleep:
+            stream._stream_until_exit(sample_config, MagicMock(), ctx)
+
+        # Should have slept 15 seconds (bypassed wait_for_stream_active)
+        mock_sleep.assert_called_with(15)
+
+
+# ── _perform_shutdown ───────────────────────────────────────────────────────
+
+
+class TestPerformShutdown:
+    def test_perform_shutdown(self, sample_config):
+        """_perform_shutdown calls cleanup_pid_file then logger.close."""
+        mock_logger = MagicMock()
+
+        with patch("stream.cleanup_pid_file") as mock_cleanup:
+            stream._perform_shutdown(sample_config, mock_logger)
+
+        mock_cleanup.assert_called_once_with(sample_config)
+        # Verify logger.info and logger.close were called
+        mock_logger.info.assert_called_once_with("Stream stopped")
+        mock_logger.close.assert_called_once()
+
+
+# ── _signal_running_process ────────────────────────────────────────────────
+
+
+class TestSignalRunningProcess:
+    def test_signal_running_process_normal(self, sample_config):
+        """Full path: sentinel written, PID read, SIGTERM sent, exit waited."""
+        with patch("stream.write_stop_sentinel") as mock_sentinel, \
+             patch("stream.read_pid_file", return_value="12345"), \
+             patch("os.kill") as mock_kill, \
+             patch("stream._wait_for_process_exit") as mock_wait:
+            stream._signal_running_process(sample_config, MagicMock())
+
+        mock_sentinel.assert_called_once_with(sample_config)
+        mock_kill.assert_called_once_with("12345", signal.SIGTERM)
+        mock_wait.assert_called_once_with("12345", 60, ANY)
+
+    def test_signal_running_process_no_pid(self, sample_config):
+        """PID file missing after sentinel written — no SIGTERM sent."""
+        with patch("stream.write_stop_sentinel") as mock_sentinel, \
+             patch("stream.read_pid_file", return_value=None), \
+             patch("os.kill") as mock_kill, \
+             patch("stream._wait_for_process_exit") as mock_wait:
+            stream._signal_running_process(sample_config, MagicMock())
+
+        mock_sentinel.assert_called_once()
+        mock_kill.assert_not_called()
+        mock_wait.assert_not_called()
+
+    def test_signal_running_process_oserror(self, sample_config):
+        """os.kill raises OSError — warning logged, no wait."""
+        with patch("stream.write_stop_sentinel") as mock_sentinel, \
+             patch("stream.read_pid_file", return_value="12345"), \
+             patch("os.kill", side_effect=OSError("No such process")), \
+             patch("stream._wait_for_process_exit") as mock_wait:
+            stream._signal_running_process(sample_config, MagicMock())
+
+        mock_sentinel.assert_called_once()
+        # os.kill was called and raised — that's verified by the side_effect
+        mock_wait.assert_not_called()
+
+
+# ── _cleanup_stop_files ─────────────────────────────────────────────────────
+
+
+class TestCleanupStopFiles:
+    def test_cleanup_stop_files(self, sample_config):
+        """_cleanup_stop_files calls both cleanup functions."""
+        with patch("stream.cleanup_pid_file") as mock_pid, \
+             patch("stream.cleanup_stop_sentinel") as mock_sentinel:
+            stream._cleanup_stop_files(sample_config)
+
+        mock_pid.assert_called_once_with(sample_config)
+        mock_sentinel.assert_called_once_with(sample_config)
+
+
+# ── do_start full orchestration ─────────────────────────────────────────────
+
+
+class TestDoStartFullOrchestration:
+    def test_do_start_full_orchestration(self, sample_config):
+        """do_start executes the complete start sequence in correct order."""
+        call_order = []
+
+        def track(name):
+            def side_effect(*args, **kwargs):
+                call_order.append(name)
+                if name == "load_config":
+                    return sample_config
+                if name == "create_logger":
+                    m = MagicMock()
+                    m.close = MagicMock()
+                    return m
+                if name == "load_resources":
+                    return {}
+            return side_effect
+
+        with patch("stream._migrate_config", side_effect=track("_migrate")), \
+             patch("stream.load_config", side_effect=track("load_config")), \
+             patch("stream.load_env", side_effect=track("load_env")), \
+             patch("stream.load_resources", side_effect=track("load_resources")), \
+             patch("stream._validate_youtube_config", side_effect=track("_validate")), \
+             patch("stream.create_logger", side_effect=track("create_logger")), \
+             patch("stream._prepare_stream_process", side_effect=track("_prepare")), \
+             patch("stream.register_signal_handlers"), \
+             patch("stream._cleanup_orphaned_broadcasts_safely", side_effect=track("_orphan")), \
+             patch("stream._retire_current_broadcast_safely", side_effect=track("_retire")), \
+             patch("stream._run_stream_loop", side_effect=track("_run")), \
+             patch("stream._perform_shutdown", side_effect=track("_shutdown")):
+            stream.do_start()
+
+        assert call_order == [
+            "_migrate", "load_config", "load_env", "load_resources",
+            "_validate", "create_logger", "_prepare",
+            "_orphan", "_retire", "_run", "_shutdown"
+        ]
