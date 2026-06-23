@@ -243,6 +243,124 @@ class TestPromptAllConfigValues:
 
         assert config["cron"]["enabled"] is False
 
+    def test_prompt_mute_fresh_install(self, sample_resources):
+        """Mute prompt asks for user input when existing_mute is None (fresh install)."""
+        fresh = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "", "videoCodec": "", "audioCodec": ""},
+            "youtube": {
+                "broadcastTitle": "", "privacy": "", "enableDvr": None,
+                "archivePrivacy": "", "categoryId": "", "broadcastId": "",
+                "streamURL": "", "backupStreamUrl": "", "streamKey": "",
+            },
+            "cron": {},  # no enabled key — will also trigger cron prompt
+        }
+
+        inputs = iter(["secret", "rtsp://cam/live", "copy", "copy",
+                       "yes",  # mute yes (fresh install)
+                       "title", "public", "no", "private",
+                       "22", "", "yes",  # cron setup yes
+                       "30 6 * * *", "25 18 * * *",
+                       "no"])  # auto_update no
+
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=fresh)
+
+        assert config["stream"]["mute"] is True  # "yes" converted to bool True
+
+    def test_prompt_mute_existing_config(self, sample_resources):
+        """Mute value is silently reused when existing_mute is not None."""
+        with_existing = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "", "videoCodec": "", "audioCodec": "",
+                       "mute": True},  # existing mute value
+            "youtube": {
+                "broadcastTitle": "", "privacy": "", "enableDvr": None,
+                "archivePrivacy": "", "categoryId": "", "broadcastId": "",
+                "streamURL": "", "backupStreamUrl": "", "streamKey": "",
+            },
+            "cron": {},  # no enabled key — will also trigger cron prompt
+        }
+
+        inputs = iter(["secret", "rtsp://cam/live", "copy", "copy",
+                       # mute skipped — already set to True
+                       "title", "public", "no", "private",
+                       "22", "", "yes",  # cron setup yes
+                       "30 6 * * *", "25 18 * * *",
+                       "no"])
+
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=with_existing)
+
+        assert config["stream"]["mute"] is True  # retained from existing
+
+    def test_prompt_dvr_fresh_install(self, sample_resources):
+        """DVR prompt asks for user input when existing_dvr is None (fresh install)."""
+        fresh = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "", "videoCodec": "", "audioCodec": "",
+                       "mute": None},  # no mute — will prompt yes/no
+            "youtube": {
+                "broadcastTitle": "", "privacy": "", "enableDvr": None,
+                "archivePrivacy": "", "categoryId": "", "broadcastId": "",
+                "streamURL": "", "backupStreamUrl": "", "streamKey": "",
+            },
+            "cron": {},  # no enabled key — will also trigger cron prompt
+        }
+
+        inputs = iter(["secret", "rtsp://cam/live", "copy", "copy",
+                       "yes",  # mute yes (fresh)
+                       "title", "public", "yes",  # dvr yes (fresh install)
+                       "private", "22", "",
+                       "yes",  # cron setup yes
+                       "30 6 * * *", "25 18 * * *",
+                       "no"])
+
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=fresh)
+
+        assert config["youtube"]["enableDvr"] is True  # "yes" converted to bool
+
+    def test_prompt_dvr_existing_config(self, sample_resources):
+        """DVR value is silently reused when existing_dvr is not None."""
+        with_existing = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "", "videoCodec": "", "audioCodec": "",
+                       "mute": None},  # will prompt for mute
+            "youtube": {
+                "broadcastTitle": "", "privacy": "", "enableDvr": False,  # existing DVR
+                "archivePrivacy": "", "categoryId": "", "broadcastId": "",
+                "streamURL": "", "backupStreamUrl": "", "streamKey": "",
+            },
+            "cron": {},  # no enabled key — will also trigger cron prompt
+        }
+
+        inputs = iter(["secret", "rtsp://cam/live", "copy", "copy",
+                       "yes",  # mute yes (fresh)
+                       "title", "public",
+                       # dvr skipped — already set to False
+                       "private", "22", "",
+                       "yes",  # cron setup yes
+                       "30 6 * * *", "25 18 * * *",
+                       "no"])
+
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=with_existing)
+
+        assert config["youtube"]["enableDvr"] is False  # retained from existing
+
 
 # ── _write_env_file (token preservation) ────────────────────────────────────
 
@@ -346,3 +464,348 @@ class TestInstallCredentialReuse:
 
         mock_oauth.assert_called_once_with(sample_config, "secret", sample_resources)
         assert result is mock_creds
+
+
+# ── do_install full orchestration ────────────────────────────────────────────
+
+
+class TestDoInstall:
+    def test_do_install_full_orchestration(self, sample_config, sample_resources):
+        """do_install executes the complete call sequence with mocked sub-functions and cron enabled."""
+        with patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._try_load_existing_config", return_value=None), \
+             patch(
+                 "stream.prompt_all_config_values",
+                 return_value=(sample_config, "test-secret"),
+             ) as mock_prompt, \
+             patch("stream._write_config_file") as mock_write_cfg, \
+             patch("stream._write_env_file") as mock_write_env, \
+             patch("stream._install_ffmpeg_if_missing") as mock_ffmpeg, \
+             patch(
+                 "stream._get_install_credentials", return_value=MagicMock()
+             ) as mock_creds, \
+             patch("stream._setup_youtube_resources") as mock_setup, \
+             patch("stream.detect_terminal", return_value="gnome-terminal"), \
+             patch("stream.save_config") as mock_save, \
+             patch("stream.register_cron_entries") as mock_register, \
+             patch("stream._print_install_summary") as mock_summary:
+
+            stream.do_install()
+
+        mock_prompt.assert_called_once()
+        mock_write_cfg.assert_called_once_with(sample_config, sample_resources)
+        mock_write_env.assert_called_once()
+        mock_ffmpeg.assert_called_once_with(sample_resources)
+        mock_creds.assert_called_once()
+        mock_setup.assert_called_once()
+        mock_save.assert_called_once_with(sample_config)
+        mock_register.assert_called_once_with(sample_config)
+        mock_summary.assert_called_once_with(sample_config, sample_resources)
+
+    def test_do_install_cron_disabled(self, sample_config, sample_resources):
+        """do_install calls remove_cron_entries when cron.enabled is False."""
+        sample_config["cron"]["enabled"] = False
+
+        with patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._try_load_existing_config", return_value=None), \
+             patch(
+                 "stream.prompt_all_config_values",
+                 return_value=(sample_config, "test-secret"),
+             ), \
+             patch("stream._write_config_file") as mock_write_cfg, \
+             patch("stream._write_env_file"), \
+             patch("stream._install_ffmpeg_if_missing"), \
+             patch(
+                 "stream._get_install_credentials", return_value=MagicMock()
+             ), \
+             patch("stream._setup_youtube_resources"), \
+             patch("stream.detect_terminal", return_value="gnome-terminal"), \
+             patch("stream.save_config") as mock_save, \
+             patch(
+                 "stream.register_cron_entries"
+             ) as mock_register, \
+             patch(
+                 "stream.remove_cron_entries"
+             ) as mock_remove, \
+             patch("stream._print_install_summary") as mock_summary:
+
+            stream.do_install()
+
+        # register_cron_entries should NOT be called
+        mock_register.assert_not_called()
+        # remove_cron_entries SHOULD be called
+        mock_remove.assert_called_once()
+        # _print_install_summary is still invoked last
+        mock_summary.assert_called_once_with(sample_config, sample_resources)
+
+
+# ── _write_config_file ───────────────────────────────────────────────────────
+
+
+class TestWriteConfigFile:
+    def test_write_config_file(self, sample_config, sample_resources):
+        """_write_config_file writes the config and prints a path message."""
+        with patch("stream.save_config") as mock_save, \
+             patch("builtins.print") as mock_print:
+
+            stream._write_config_file(sample_config, sample_resources)
+
+        mock_save.assert_called_once_with(sample_config)
+        # Verify a message containing the config file path was printed
+        print_calls = [c[0][0] for c in mock_print.call_args_list]
+        config_path_msg = [m for m in print_calls if "config.toml" in m]
+        assert len(config_path_msg) >= 1
+
+
+# ── _install_ffmpeg_if_missing ───────────────────────────────────────────────
+
+
+class TestInstallFfmpegIfMissing:
+    def test_ffmpeg_present_skips_install(self, sample_resources):
+        """_install_ffmpeg_if_missing does nothing when ffmpeg is already installed."""
+        with patch("shutil.which", return_value="/usr/bin/ffmpeg"), \
+             patch("subprocess.check_call") as mock_check, \
+             patch("builtins.print"):
+
+            stream._install_ffmpeg_if_missing(sample_resources)
+
+        mock_check.assert_not_called()
+
+    def test_install_ffmpeg_missing_path(self, sample_resources):
+        """_install_ffmpeg_if_missing triggers apt install when ffmpeg is not found."""
+        with patch("shutil.which", return_value=None), \
+             patch("subprocess.check_call") as mock_check, \
+             patch("builtins.print"):
+
+            stream._install_ffmpeg_if_missing(sample_resources)
+
+        mock_check.assert_called_once_with(
+            ["sudo", "apt", "install", "-y", "ffmpeg"]
+        )
+
+    def test_ffmpeg_missing_propagates_error(self, sample_resources):
+        """_install_ffmpeg_if_missing propagates CalledProcessError when apt install fails."""
+        from subprocess import CalledProcessError
+
+        with patch("shutil.which", return_value=None), \
+             patch(
+                 "subprocess.check_call",
+                 side_effect=CalledProcessError(1, ["sudo", "apt", "install", "-y", "ffmpeg"]),
+             ), \
+             patch("builtins.print"):
+
+            with pytest.raises(CalledProcessError):
+                stream._install_ffmpeg_if_missing(sample_resources)
+
+
+# ── _run_install_oauth ───────────────────────────────────────────────────────
+
+
+class TestRunInstallOauth:
+    def test_run_install_oauth(self, tmp_script_dir):
+        """_run_install_oauth runs the OAuth flow and writes tokens to .env."""
+        mock_creds = MagicMock()
+        mock_creds.refresh_token = "new-refresh"
+        mock_creds.token = "new-access"
+
+        config = {"google": {"clientId": "test-client-id"}}
+        with patch("stream.run_oauth_flow", return_value=mock_creds) as mock_run, \
+             patch("stream.set_key") as mock_set_key, \
+             patch("builtins.print"):
+
+            stream._run_install_oauth(config, "test-secret", MagicMock())
+
+        mock_run.assert_called_once_with("test-client-id", "test-secret")
+        # Both tokens should be written to .env (set_key(path, key, value))
+        set_key_calls = [c[0][1:] for c in mock_set_key.call_args_list]
+        assert ("GOOGLE_REFRESH_TOKEN", "new-refresh") in set_key_calls
+        assert ("GOOGLE_ACCESS_TOKEN", "new-access") in set_key_calls
+
+    def test_run_install_oauth_propagates_error(self):
+        """_run_install_oauth propagates an error when run_oauth_flow fails."""
+        config = {"google": {"clientId": "test-client-id"}}
+        with patch(
+            "stream.run_oauth_flow", side_effect=RuntimeError("OAuth failed")
+        ), patch("builtins.print"):
+
+            with pytest.raises(RuntimeError, match="OAuth failed"):
+                stream._run_install_oauth(config, "test-secret", MagicMock())
+
+
+# ── _print_install_summary ───────────────────────────────────────────────────
+
+
+class TestPrintInstallSummary:
+    def _make_summary_res(self):
+        """Build a minimal resources dict with install.summary data."""
+        return {
+            "install": {
+                "summary": {
+                    "header": "\n=== Setup Complete ===",
+                    "config": "  Config:        {path}",
+                    "secrets": "  Secrets:       {path}",
+                    "terminal": "  Terminal:      {terminal}",
+                    "cron_start": "  Cron start:    {schedule}",
+                    "cron_stop": "  Cron stop:     {schedule}",
+                    "cron_update": "  Cron update:   {schedule}",
+                    "youtube_url": "  YouTube URL:   https://youtube.com/live/{broadcast_id}",
+                    "run_hint": "\nRun 'python3 stream.py --start' to begin streaming.",
+                    "edit_hint": "You can manually edit config.toml to adjust settings at any time.",
+                }
+            }
+        }
+
+    def test_print_summary_cron_enabled_no_update(self, sample_config):
+        """_print_install_summary shows start/stop schedules but omits update when autoUpdate is False."""
+        sample_config["cron"]["enabled"] = True
+        sample_config["cron"]["autoUpdate"] = False
+        sample_config["youtube"]["broadcastId"] = "bcast-123"
+
+        with patch("builtins.print") as mock_print, \
+             patch.object(stream, "SCRIPT_DIR", stream.Path("/test/path")):
+
+            stream._print_install_summary(sample_config, self._make_summary_res())
+
+        output = " ".join([str(c[0][0]) for c in mock_print.call_args_list])
+        assert "bcast-123" in output
+
+    def test_print_summary_cron_enabled_with_update(self, sample_config):
+        """_print_install_summary shows start/stop/update schedules when autoUpdate is True."""
+        sample_config["cron"]["enabled"] = True
+        sample_config["cron"]["autoUpdate"] = True
+        sample_config["youtube"]["broadcastId"] = "bcast-456"
+
+        with patch("builtins.print") as mock_print, \
+             patch.object(stream, "SCRIPT_DIR", stream.Path("/test/path")):
+
+            stream._print_install_summary(sample_config, self._make_summary_res())
+
+        output = " ".join([str(c[0][0]) for c in mock_print.call_args_list])
+        assert "bcast-456" in output
+
+    def test_print_summary_cron_disabled(self, sample_config):
+        """_print_install_summary shows 'disabled' instead of schedules when cron is disabled."""
+        sample_config["cron"]["enabled"] = False
+        sample_config["youtube"]["broadcastId"] = "bcast-789"
+
+        with patch("builtins.print") as mock_print, \
+             patch.object(stream, "SCRIPT_DIR", stream.Path("/test/path")):
+
+            stream._print_install_summary(sample_config, self._make_summary_res())
+
+        output = " ".join([str(c[0][0]) for c in mock_print.call_args_list])
+        assert "bcast-789" in output
+        assert "disabled" in output.lower()
+
+
+# ── Auto-update prompt edge cases (separate class to avoid input count issues) ─
+
+
+class TestPromptAutoUpdate:
+    def test_prompt_auto_update_yes_with_schedule(self, sample_resources):
+        """Auto-update yes triggers a follow-up prompt for the cron_update schedule."""
+        fresh = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "", "videoCodec": "", "audioCodec": "",
+                       "mute": None},  # will prompt for mute
+            "youtube": {
+                "broadcastTitle": "", "privacy": "", "enableDvr": None,
+                "archivePrivacy": "", "categoryId": "", "broadcastId": "",
+                "streamURL": "", "backupStreamUrl": "", "streamKey": "",
+            },
+            "cron": {},  # no enabled key — will also trigger cron prompt
+        }
+
+        inputs = iter(["secret", "rtsp://cam/live", "copy", "copy",
+                       "yes",  # mute yes
+                       "title", "public", "no",  # dvr no
+                       "private", "22", "",
+                       "yes",  # cron setup yes
+                       "30 6 * * *", "25 18 * * *",
+                       "yes",  # auto_update yes (triggers follow-up)
+                       "0 2 * * *"])  # cron_update schedule
+
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=fresh)
+
+        assert config["cron"]["autoUpdate"] is True
+        assert config["cron"]["update"] == "0 2 * * *"
+
+    def test_prompt_auto_update_no(self, sample_resources):
+        """Auto-update no skips the follow-up schedule prompt entirely."""
+        fresh = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "", "videoCodec": "", "audioCodec": "",
+                       "mute": None},  # will prompt for mute
+            "youtube": {
+                "broadcastTitle": "", "privacy": "", "enableDvr": None,
+                "archivePrivacy": "", "categoryId": "", "broadcastId": "",
+                "streamURL": "", "backupStreamUrl": "", "streamKey": "",
+            },
+            "cron": {},  # no enabled key — will also trigger cron prompt
+        }
+
+        inputs = iter(["secret", "rtsp://cam/live", "copy", "copy",
+                       "yes",  # mute yes
+                       "title", "public", "no",  # dvr no
+                       "private", "22", "",
+                       "yes",  # cron setup yes
+                       "30 6 * * *", "25 18 * * *",
+                       "no"])  # auto_update no (skip schedule)
+
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=fresh)
+
+        assert config["cron"]["autoUpdate"] is False
+        # cron_update should remain empty (no follow-up prompt consumed input)
+
+    def test_prompt_auto_update_existing_config(self, sample_resources):
+        """Auto-update value is silently reused when existing_auto_update is not None."""
+        with_existing = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "", "videoCodec": "", "audioCodec": "",
+                       "mute": None},  # will prompt for mute (None = fresh)
+            "youtube": {
+                "broadcastTitle": "", "privacy": "", "enableDvr": None,
+                "archivePrivacy": "", "categoryId": "", "broadcastId": "",
+                "streamURL": "", "backupStreamUrl": "", "streamKey": "",
+            },
+            # cron.enabled exists, so no setup prompt. autoUpdate already set to True.
+            # But start/stop are empty strings, so _smart_prompt will prompt for them.
+            "cron": {"enabled": True, "start": "", "stop": "",
+                     "autoUpdate": True, "update": ""},
+        }
+
+        # Full input sequence for all prompts that fire:
+        inputs = iter([
+            "secret",           # client_secret (empty existing)
+            "rtsp://cam/live",  # rtsp_url (validator check)
+            "",                 # video_codec → empty, accepts default "copy"
+            "",                 # audio_codec → empty, accepts default "copy"
+            "yes",              # mute yes (fresh install)
+            "",                 # broadcast_title → empty, accepts default "My Location: {date}"
+            "public",           # privacy (validator check)
+            "",                 # enable_dvr → empty, accepts default "no"
+            "private",          # archive_privacy (validator check)
+            "",                 # category_id → empty, accepts default "22"
+            "",                 # broadcast_id (empty = new)
+            "30 6 * * *",       # cron_start (_smart_prompt, empty current)
+            "25 18 * * *",      # cron_stop (_smart_prompt, empty current)
+            # auto_update already True → silently reused into auto_update variable
+            # But if auto_update is True, _smart_prompt fires for cron_update schedule:
+            "",                 # cron_update → empty, accepts default "0 0 * * *"
+        ])
+
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=with_existing)
+
+        assert config["cron"]["autoUpdate"] is True  # retained from existing
