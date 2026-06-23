@@ -32,29 +32,27 @@ The two-tier YouTube API split keeps API calls testable and side-effect-free at 
 
 ## Data flow (`--start`)
 
-```
-config.toml / .env
-   │
-   ▼
-load + migrate config ──► validate YouTube config
-   │
-   ▼
-OAuth credentials ──► YouTube service
-   │
-   ▼
-cleanup orphaned broadcasts ──► retire current broadcast
-   │
-   ▼
-retry loop:
-   connect ──► build ffmpeg cmd ──► launch ffmpeg
-        │                                │
-        │                                ▼
-        │                        relay output → logger
-        ▼
-   wait for stream active ──► ensure broadcast live ──► update title
-        │
-        ▼
-   ffmpeg exits ──► retry (alternate primary/backup RTMP) or stop
+```mermaid
+flowchart TD
+    A[config.toml / .env] --> B[load + migrate config]
+    B --> C[validate YouTube config]
+    C --> D[OAuth credentials]
+    D --> E[YouTube service]
+    E --> F[cleanup orphaned broadcasts]
+    F --> G[retire current broadcast]
+    G --> H
+
+    subgraph retry["retry loop"]
+        H[connect] --> I[build ffmpeg cmd]
+        I --> J[launch ffmpeg]
+        J --> K[relay output → logger]
+        H --> L[wait for stream active]
+        L --> M[ensure broadcast live]
+        M --> N[update title]
+        J --> O{ffmpeg exits?}
+        O -->|"alternate primary/backup RTMP"| H
+        O -->|stop| P([done])
+    end
 ```
 
 ## Stable URL guarantee

@@ -23,21 +23,22 @@ The sentinel decouples "stop streaming" from "kill process": even mid-retry-dela
 
 `SIGINT` and `SIGTERM` are both treated as a graceful stop, identical to `--stop`:
 
-```
-signal received → set _stop_requested → write stop sentinel → terminate ffmpeg
+```mermaid
+flowchart LR
+    A[signal received] --> B[set _stop_requested] --> C[write stop sentinel] --> D[terminate ffmpeg]
 ```
 
 This makes `Ctrl-C`, `kill`, and the stop cron behave the same way. Handlers are registered at the start of `--start`.
 
 ## `--stop` sequence
 
-```
-1. write stop sentinel
-2. read PID → SIGTERM the process
-3. wait up to 60s for exit
-4. transition broadcast → complete (archive as VOD)
-5. apply archivePrivacy
-6. remove PID + sentinel files
+```mermaid
+flowchart TD
+    A[1. write stop sentinel] --> B[2. read PID → SIGTERM the process]
+    B --> C[3. wait up to 60s for exit]
+    C --> D["4. transition broadcast → complete<br/>(archive as VOD)"]
+    D --> E[5. apply archivePrivacy]
+    E --> F[6. remove PID + sentinel files]
 ```
 
 Broadcast config is preserved so the next `--start` can reuse the stream resource.

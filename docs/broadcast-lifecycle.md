@@ -34,17 +34,20 @@ YouTube broadcasts move through: `created` → `ready` → `testing` → `live` 
 
 ## During `--start`
 
-```
-1. cleanup orphaned broadcasts   (complete live/testing, delete created/ready)
-2. retire current broadcast      (if active, transition → complete)
-3. launch ffmpeg
-4. wait for stream → active
-5. ensure broadcast live:
-      complete  → create fresh broadcast, bind stream, update config → live
-      ready/created → testing → live
-      testing   → live
-      live      → no-op
-6. update broadcast title with today's date   (AFTER step 5)
+```mermaid
+flowchart TD
+    A["1. cleanup orphaned broadcasts<br/>(complete live/testing, delete created/ready)"] --> B["2. retire current broadcast<br/>(if active, transition → complete)"]
+    B --> C[3. launch ffmpeg]
+    C --> D[4. wait for stream → active]
+    D --> E{5. ensure broadcast live}
+    E -->|complete| F[create fresh broadcast, bind stream,<br/>update config → live]
+    E -->|ready / created| G[testing → live]
+    E -->|testing| H[→ live]
+    E -->|live| I[no-op]
+    F --> J["6. update broadcast title with today's date<br/>(AFTER step 5)"]
+    G --> J
+    H --> J
+    I --> J
 ```
 
 Title update happens **after** `ensure_broadcast_live` so it stamps the *new* broadcast, never yesterday's archived one. Doing it earlier corrupted the prior day's VOD title with tomorrow's date. See [ADR-0019](adr/0019-title-update-after-ensure-live.md).
