@@ -19,16 +19,15 @@ https://www.googleapis.com/auth/youtube.force-ssl
 
 ## Flow
 
-```
-get_valid_credentials()
-   │
-   ├─ no refresh token ───────────────► browser OAuth flow → save tokens
-   │
-   ├─ access token valid ─────────────► use as-is
-   │
-   ├─ access token expired ──► refresh ──► save new access token
-   │                              │
-   │                              └─ refresh fails ──► browser OAuth flow
+```mermaid
+flowchart TD
+    A["get_valid_credentials()"] --> B{credential state}
+    B -->|no refresh token| C[browser OAuth flow]
+    C --> D[save tokens]
+    B -->|access token valid| E[use as-is]
+    B -->|access token expired| F[refresh]
+    F --> G[save new access token]
+    F -->|refresh fails| C
 ```
 
 - The **initial** browser flow runs during `--install`, writing both tokens to `.env`.
