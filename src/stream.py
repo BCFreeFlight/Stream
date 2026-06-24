@@ -940,7 +940,7 @@ def _create_fresh_broadcast(youtube, config, logger):
     return new_id
 
 
-def ensure_broadcast_live(youtube, broadcast_id, config, logger, res=None):
+def ensure_broadcast_live(youtube, broadcast_id, logger, res=None):
     """Transition the broadcast to live if it is not already.
 
     Only handles existing non-complete broadcasts (live, ready, created, testing).
@@ -1845,25 +1845,23 @@ def _setup_youtube_resources_with_prompt(youtube, existing_config, logger, promp
             resources["backupStreamUrl"] = backup_url
             resources["streamKey"] = stream_key
 
-    # Bind and apply settings with the resolved broadcast_id
+    # Bind and apply settings with the resolved broadcast_id.
+    # Only run this block when _setup_youtube_resources took the early-return path
+    # (streamKey was None and nothing was bound). When streamKey already existed,
+    # _setup_youtube_resources already handled binding and applying above.
     if resources["streamKey"] is not None:
         yt = existing_config["youtube"]
 
-        # Find stream ID for binding (already have it from creation path)
-        if not yt.get("streamKey") or resources["streamKey"] is None:
-            # stream_id was set above during creation
-            pass
-        else:
-            result = find_stream_resource_by_key(youtube, resources["streamKey"], logger)
-            stream_id = result[0] if result else None
+        # Only bind/apply if _setup_youtube_resources did not already do it
+        # (i.e., the existing_config had no streamKey, so we created a new one)
+        if not yt.get("streamKey"):
+            bind_stream_to_broadcast(youtube, broadcast_id, stream_id, logger)
 
-        bind_stream_to_broadcast(youtube, broadcast_id, stream_id, logger)
+            if yt.get("categoryId"):
+                apply_broadcast_category(youtube, broadcast_id, yt["categoryId"], logger)
 
-        if yt.get("categoryId"):
-            apply_broadcast_category(youtube, broadcast_id, yt["categoryId"], logger)
-
-        if broadcast_id:
-            apply_video_embeddable(youtube, broadcast_id, yt.get("embeddable", True), logger)
+            if broadcast_id:
+                apply_video_embeddable(youtube, broadcast_id, yt.get("embeddable", True), logger)
 
     print_messages.append(msgs["broadcast_id_label"].format(broadcast_id=broadcast_id))
     print_messages.append(msgs["stream_url_label"].format(broadcast_id=broadcast_id))
@@ -2068,7 +2066,7 @@ def _wait_and_go_live(youtube, broadcast_id, stream_id, config, logger):
         logger.debug("Stream ID unavailable — waiting for ffmpeg to establish connection")
         time.sleep(15)
 
-    ensure_broadcast_live(youtube, broadcast_id, config, logger)
+    ensure_broadcast_live(youtube, broadcast_id, logger)
 
 
 def _stream_until_exit(config, logger, ctx, res=None, first_attempt=False):
@@ -2147,7 +2145,7 @@ def _run_stream_loop(config, logger, res=None):
             # A complete broadcast raises RuntimeError from ensure_broadcast_live.
             # Catch it here, create a fresh broadcast, and retry the loop.
             msg = str(exc)
-            if "complete" in msg.lower() and attempt == 0:
+            if "complete" in msg.lower():
                 logger.info(f"Broadcast is complete — creating a fresh one")
                 try:
                     creds = get_valid_credentials(config, logger)
@@ -2167,6 +2165,7 @@ def _run_stream_loop(config, logger, res=None):
                 if is_stop_requested(config):
                     break
                 # Continue the loop — attempt stays 0 so title gets updated on retry
+                continue
 
             logger.warn(f"Streaming error: {exc}")
             _cleanup_ffmpeg()

@@ -489,8 +489,8 @@ class TestStreamUntilExitTitleUpdate:
         mock_process.returncode = 0
         mock_start.return_value = mock_process
 
-        def simulate_new_broadcast(yt, bid, config, logger, res=None):
-            config["youtube"]["broadcastId"] = "bcast-fresh"
+        def simulate_new_broadcast(yt, bid, logger, res=None):
+            sample_config["youtube"]["broadcastId"] = "bcast-fresh"
 
         mock_ensure.side_effect = simulate_new_broadcast
 

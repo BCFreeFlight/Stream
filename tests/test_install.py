@@ -805,3 +805,191 @@ class TestPromptAutoUpdate:
             config, _ = stream.prompt_all_config_values(sample_resources, existing=with_existing)
 
         assert config["cron"]["autoUpdate"] is True  # retained from existing
+
+
+# ── _setup_youtube_resources_with_prompt (interactive install path) ─────────
+
+class TestSetupYoutubeResourcesWithPrompt:
+    """Tests for the interactive install-time YouTube resource setup.
+
+    This function handles three distinct stream-key code paths:
+      1. User provides a valid existing key → finds and uses it
+      2. User provides an invalid key → creates a new stream resource
+      3. User provides no key (empty) → creates a new stream resource
+
+    CLAUDE.md: "New functions added to stream.py must have test coverage."
+    """
+
+    def _make_resources(self, install_section):
+        """Build a minimal resources dict matching the expected structure."""
+        return {
+            "install": {
+                "messages": install_section.get("messages", {}),
+                "stream_key_guide": install_section.get("stream_key_guide", ""),
+            }
+        }
+
+    def test_valid_user_provided_key_finds_existing_stream(self, sample_config):
+        """When user provides a valid existing key, it is found and used."""
+        sample_config["youtube"]["broadcastId"] = "bcast-123"
+        # No streamKey — triggers the interactive path
+
+        mock_youtube = MagicMock()
+        logger = MagicMock()
+        prompts = {"streamKey": "Stream Key"}
+
+        install_section = {
+            "messages": {
+                "stream_key_not_found": "Key not found",
+                "broadcast_id_label": "Broadcast ID: {broadcast_id}",
+                "stream_url_label": "Stream URL: rtmp://test",
+            },
+        }
+
+        with patch("stream._setup_youtube_resources") as mock_setup, \
+             patch("stream._show_guide"), \
+             patch("builtins.input", return_value="existing-key"), \
+             patch("stream.find_stream_resource_by_key") as mock_find, \
+             patch("stream.create_stream_resource"):
+
+            # _setup_youtube_resources returns None streamKey (no key in config)
+            mock_setup.return_value = {
+                "broadcastId": "bcast-123",
+                "streamURL": "",
+                "backupStreamUrl": "",
+                "streamKey": None,
+            }
+
+            # find_stream_resource_by_key finds the existing stream
+            mock_find.return_value = ("s-id-456", "rtmp://primary", "rtmp://backup")
+
+            res = self._make_resources(install_section)
+            resources, messages = stream._setup_youtube_resources_with_prompt(
+                mock_youtube, sample_config, logger, prompts, res
+            )
+
+        # Should have found and used the existing key
+        assert resources["streamKey"] == "existing-key"
+        assert resources["streamURL"] == "rtmp://primary"
+        assert resources["backupStreamUrl"] == "rtmp://backup"
+
+    def test_invalid_user_provided_key_creates_new_stream(self, sample_config):
+        """When user provides an invalid key, a new stream resource is created."""
+        sample_config["youtube"]["broadcastId"] = "bcast-123"
+
+        mock_youtube = MagicMock()
+        logger = MagicMock()
+        prompts = {"streamKey": "Stream Key"}
+
+        install_section = {
+            "messages": {
+                "stream_key_not_found": "Key not found — creating new one",
+                "broadcast_id_label": "Broadcast ID: {broadcast_id}",
+                "stream_url_label": "Stream URL: rtmp://test",
+            },
+        }
+
+        with patch("stream._setup_youtube_resources") as mock_setup, \
+             patch("stream._show_guide"), \
+             patch("builtins.input", return_value="bad-key"), \
+             patch("stream.find_stream_resource_by_key") as mock_find, \
+             patch("stream.create_stream_resource") as mock_create:
+
+            mock_setup.return_value = {
+                "broadcastId": "bcast-123",
+                "streamURL": "",
+                "backupStreamUrl": "",
+                "streamKey": None,
+            }
+
+            # Key not found → create new one
+            mock_find.return_value = None
+            mock_create.return_value = ("s-id-new", "rtmp://new-p", "rtmp://new-b", "new-key")
+
+            res = self._make_resources(install_section)
+            resources, messages = stream._setup_youtube_resources_with_prompt(
+                mock_youtube, sample_config, logger, prompts, res
+            )
+
+        # Should have created a new stream resource
+        assert resources["streamKey"] == "new-key"
+        # Should have shown the not-found message
+        assert any("not found" in m.lower() for m in messages)
+
+    def test_empty_user_key_creates_new_stream(self, sample_config):
+        """When user provides no key (empty), a new stream resource is created."""
+        sample_config["youtube"]["broadcastId"] = "bcast-123"
+
+        mock_youtube = MagicMock()
+        logger = MagicMock()
+        prompts = {"streamKey": "Stream Key"}
+
+        install_section = {
+            "messages": {
+                "stream_key_not_found": "Key not found",
+                "broadcast_id_label": "Broadcast ID: {broadcast_id}",
+                "stream_url_label": "Stream URL: rtmp://test",
+            },
+        }
+
+        with patch("stream._setup_youtube_resources") as mock_setup, \
+             patch("stream._show_guide"), \
+             patch("builtins.input", return_value=""), \
+             patch("stream.find_stream_resource_by_key"), \
+             patch("stream.create_stream_resource") as mock_create:
+
+            mock_setup.return_value = {
+                "broadcastId": "bcast-123",
+                "streamURL": "",
+                "backupStreamUrl": "",
+                "streamKey": None,
+            }
+
+            mock_create.return_value = ("s-id-new", "rtmp://new-p", "rtmp://new-b", "new-key")
+
+            res = self._make_resources(install_section)
+            resources, messages = stream._setup_youtube_resources_with_prompt(
+                mock_youtube, sample_config, logger, prompts, res
+            )
+
+        # Should have created a new stream resource (not looked up)
+        assert resources["streamKey"] == "new-key"
+        mock_create.assert_called_once_with(mock_youtube, logger)
+
+    def test_existing_stream_key_skips_prompt_and_binds(self, sample_config):
+        """When config already has a streamKey, no prompting occurs and binding happens."""
+        sample_config["youtube"]["broadcastId"] = "bcast-123"
+        sample_config["youtube"]["streamKey"] = "pre-existing-key"
+
+        mock_youtube = MagicMock()
+        logger = MagicMock()
+        prompts = {"streamKey": "Stream Key"}
+
+        install_section = {
+            "messages": {
+                "broadcast_id_label": "Broadcast ID: {broadcast_id}",
+                "stream_url_label": "Stream URL: rtmp://test",
+            },
+        }
+
+        with patch("stream._setup_youtube_resources") as mock_setup, \
+             patch("builtins.input"), \
+             patch("stream.find_stream_resource_by_key") as mock_find, \
+             patch("stream.bind_stream_to_broadcast"), \
+             patch("stream.apply_video_embeddable"):
+
+            # _setup_youtube_resources returns the existing key
+            mock_setup.return_value = {
+                "broadcastId": "bcast-123",
+                "streamURL": "rtmp://a.rtmp.youtube.com/live2",
+                "backupStreamUrl": "rtmp://b.rtmp.youtube.com/live2?backup=1",
+                "streamKey": "pre-existing-key",
+            }
+
+            res = self._make_resources(install_section)
+            resources, messages = stream._setup_youtube_resources_with_prompt(
+                mock_youtube, sample_config, logger, prompts, res
+            )
+
+        # Should have returned the existing key without prompting
+        assert resources["streamKey"] == "pre-existing-key"
