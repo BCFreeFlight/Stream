@@ -728,12 +728,18 @@ class TestHighLevelOrchestration:
     def test_ensure_broadcast_live_complete_creates_new(
         self, mock_lifecycle, mock_create, mock_trans, mock_logger, sample_config
     ):
-        """Creates a new broadcast and transitions to live when status is 'complete'."""
+        """When status is 'complete', ensure_broadcast_live raises RuntimeError.
+
+        The caller (_run_stream_loop) catches this and creates a fresh broadcast
+        instead of handling it internally.
+        """
         mock_lifecycle.return_value = "complete"
         yt = MagicMock()
-        stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
-        mock_create.assert_called_once_with(yt, sample_config, mock_logger)
-        mock_trans.assert_called_once_with(yt, "new-bid", mock_logger)
+        with pytest.raises(RuntimeError, match="complete"):
+            stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
+        # create and transition should NOT be called — that's the caller's job now
+        mock_create.assert_not_called()
+        mock_trans.assert_not_called()
 
     @patch("stream._api_get_broadcast_lifecycle")
     def test_ensure_broadcast_live_unknown_raises(self, mock_lifecycle, mock_logger, sample_config):

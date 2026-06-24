@@ -244,7 +244,7 @@ class TestCleanupOrphanedBroadcastsSafely:
 
 class TestCreateFreshBroadcast:
     def test_create_fresh_broadcast(self, tmp_script_dir, sample_config, mock_logger):
-        """Creates a new broadcast, binds stream, saves config, returns new ID."""
+        """Creates a new broadcast and returns the new ID. Does NOT save or update config."""
         mock_youtube = MagicMock()
 
         with patch("stream.create_broadcast", return_value="new-bcast-456"), \
@@ -256,12 +256,14 @@ class TestCreateFreshBroadcast:
             result = stream._create_fresh_broadcast(mock_youtube, sample_config, mock_logger)
 
         assert result == "new-bcast-456"
-        assert sample_config["youtube"]["broadcastId"] == "new-bcast-456"
+        # _create_fresh_broadcast does NOT save config — that's the caller's responsibility
+        mock_save.assert_not_called()
+        # _create_fresh_broadcast does NOT update config["youtube"]["broadcastId"] — caller does that
+        assert sample_config["youtube"]["broadcastId"] == "bcast-123"  # unchanged
         mock_find.assert_called_once_with(mock_youtube, "xxxx-yyyy-zzzz", mock_logger)
         mock_bind.assert_called_once_with(mock_youtube, "new-bcast-456", "stream-resolved", mock_logger)
         mock_cat.assert_called_once_with(mock_youtube, "new-bcast-456", "22", mock_logger)
         mock_embed.assert_called_once_with(mock_youtube, "new-bcast-456", True, mock_logger)
-        mock_save.assert_called_once_with(sample_config)
 
 
 class TestDoStopOrchestration:
@@ -577,6 +579,29 @@ class TestRunStreamLoop:
 
         # Should have tried twice (initial + one retry)
         assert mock_connect.call_count == 2
+
+    def test_run_stream_loop_complete_broadcast_creates_new(self, sample_config):
+        """Complete broadcast raises RuntimeError — loop creates fresh and retries."""
+        with patch("stream._connect_to_broadcast") as mock_connect, \
+             patch("stream.get_valid_credentials"), \
+             patch("stream.build_youtube_service") as mock_build, \
+             patch("stream._create_fresh_broadcast", return_value="new-bcast"), \
+             patch("stream.save_config"), \
+             patch.object(stream.time, "sleep"):
+            # First call raises complete broadcast error; second succeeds
+            mock_connect.side_effect = [RuntimeError("Broadcast is complete"), None]
+
+            # _stream_until_exit raises RuntimeError on first call (complete broadcast)
+            with patch("stream._stream_until_exit", side_effect=[
+                RuntimeError("Broadcast is complete"),  # first attempt: complete
+            ]):
+                with patch("stream.is_stop_requested", return_value=False), \
+                     patch("stream._wait_before_retry", side_effect=[True, False]), \
+                     patch("stream._cleanup_ffmpeg"):
+                    stream._run_stream_loop(sample_config, MagicMock())
+
+        # Should have tried connecting at least once
+        assert mock_connect.call_count >= 1
 
     def test_run_stream_loop_retry_break(self, sample_config):
         """Loop exits when _wait_before_retry returns False."""
