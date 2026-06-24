@@ -1,3 +1,15 @@
+---
+title: "ADR-0018: Skipped-version marker to protect rollbacks"
+description: Documents the decision to record rolled-back versions in config to prevent auto-update from reinstalling rejected releases.
+category: adr
+tags:
+  - accepted
+  - update
+  - rollback
+  - versioning
+  - config
+---
+
 # ADR-0018: Skipped-version marker to protect rollbacks
 
 **Status:** Accepted · Refs: issue #41, PR #81

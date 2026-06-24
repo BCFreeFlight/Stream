@@ -1,3 +1,15 @@
+---
+title: "ADR-0013: Alternate primary/backup RTMP across retries"
+description: Documents the decision to alternate between primary and backup RTMP ingest endpoints on each retry attempt for unattended stream recovery.
+category: adr
+tags:
+  - retry
+  - ffmpeg
+  - streams
+  - resilience
+  - accepted
+---
+
 # ADR-0013: Alternate primary/backup RTMP across retries
 
 **Status:** Accepted · Refs: PR #13

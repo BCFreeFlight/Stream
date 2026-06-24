@@ -1,3 +1,15 @@
+---
+title: "ADR-0008: Complete the broadcast on --stop to archive a VOD"
+description: Documents the decision to transition broadcasts to complete state on --stop so YouTube archives each stream as a watchable VOD.
+category: adr
+tags:
+  - broadcast
+  - youtube
+  - vod
+  - accepted
+  - archive
+---
+
 # ADR-0008: Complete the broadcast on `--stop` to archive a VOD
 
 **Status:** Accepted · Refs: issue #7, PR #8

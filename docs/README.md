@@ -1,3 +1,15 @@
+---
+title: Documentation
+description: Index of all reference documentation, guides, and ADRs for the BC Free Flight Stream project.
+category: overview
+tags:
+  - documentation
+  - index
+  - ffmpeg
+  - youtube
+  - streaming
+---
+
 # Documentation
 
 Reference documentation for **BC Free Flight Stream** — a single-file Python script that proxies an RTSP camera to YouTube Live via ffmpeg.
@@ -19,6 +31,21 @@ Reference documentation for **BC Free Flight Stream** — a single-file Python s
 | [Logging](logging.md) | Log format, levels, retention |
 | [Development](development.md) | Repo rules, testing, release workflow |
 | [Troubleshooting](troubleshooting.md) | Common failures and fixes |
+
+## YouTube Live API Reference
+
+Deep-dive documentation on the YouTube Data API v3 live streaming surface —
+every endpoint used by this project, the broadcast state machine, known gotchas,
+and API-verified details gathered from the official documentation.
+
+| Doc | Covers |
+|-----|--------|
+| [YouTube API Overview](youtube/README.md) | Quick reference, embed URL patterns, prerequisites |
+| [Authentication](youtube/authentication.md) | OAuth 2.0, scopes, quota, token lifecycle |
+| [Broadcasts API](youtube/broadcasts.md) | `liveBroadcasts` — all methods, state machine, error codes |
+| [Streams API](youtube/streams.md) | `liveStreams` — ingest endpoints, status polling, health |
+| [Videos API](youtube/videos.md) | `videos` — embeddable flag, category, archive privacy |
+| [Gotchas](youtube/gotchas.md) | Every known quirk, undocumented constraint, and workaround |
 
 ## Architecture Decision Records
 

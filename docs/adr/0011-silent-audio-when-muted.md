@@ -1,3 +1,15 @@
+---
+title: "ADR-0011: Inject a silent AAC track when muted"
+description: Documents the decision to inject a silent AAC audio track instead of dropping audio when mute is enabled, ensuring YouTube live ingest accepts the stream.
+category: adr
+tags:
+  - ffmpeg
+  - audio
+  - mute
+  - streams
+  - accepted
+---
+
 # ADR-0011: Inject a silent AAC track when muted
 
 **Status:** Accepted · Refs: PR #14

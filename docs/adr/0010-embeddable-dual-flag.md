@@ -1,3 +1,15 @@
+---
+title: "ADR-0010: Set embeddable on both broadcast and video"
+description: Documents the decision to set the embeddable flag on both the liveBroadcast and video resources to fix mobile embed playback restrictions.
+category: adr
+tags:
+  - embeddable
+  - broadcast
+  - youtube
+  - mobile
+  - accepted
+---
+
 # ADR-0010: Set embeddable on both broadcast and video
 
 **Status:** Accepted · Refs: issue #20, PRs #17, #29–#33 · Fixed: issue #110, PR #112

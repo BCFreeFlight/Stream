@@ -1,3 +1,15 @@
+---
+title: Requirements
+description: Lists all system, Python package, external service, and runtime file requirements for running the BC Free Flight Stream script.
+category: reference
+tags:
+  - dependencies
+  - ffmpeg
+  - python
+  - configuration
+  - runtime
+---
+
 # Requirements
 
 ## System

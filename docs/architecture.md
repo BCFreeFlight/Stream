@@ -1,3 +1,15 @@
+---
+title: Architecture
+description: Describes the high-level architecture, internal layers, data flow, and design constraints of the BC Free Flight Stream single-file script.
+category: overview
+tags:
+  - architecture
+  - ffmpeg
+  - youtube
+  - streams
+  - oauth
+---
+
 # Architecture
 
 ## Purpose

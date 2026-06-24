@@ -1,3 +1,15 @@
+---
+title: Troubleshooting
+description: Solutions and diagnostic steps for common issues with streaming, OAuth, embeds, cron, and recovery.
+category: guide
+tags:
+  - troubleshooting
+  - ffmpeg
+  - oauth
+  - cron
+  - streams
+---
+
 # Troubleshooting
 
 Run any command with `--log-level debug` for full detail.

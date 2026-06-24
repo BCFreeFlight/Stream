@@ -1,3 +1,15 @@
+---
+title: "ADR-0004: TOML for config and resources, not JSON"
+description: Records the decision to use TOML instead of JSON for configuration and resource files, with inline comments via tomli/tomli-w.
+category: adr
+tags:
+  - toml
+  - configuration
+  - accepted
+  - dependencies
+  - migration
+---
+
 # ADR-0004: TOML for config and resources, not JSON
 
 **Status:** Accepted · Refs: PR #6

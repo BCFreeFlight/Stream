@@ -1,3 +1,15 @@
+---
+title: Configuration
+description: Reference for all config.toml and .env keys used by stream.py, including their types, defaults, and descriptions.
+category: reference
+tags:
+  - configuration
+  - config.toml
+  - env
+  - youtube
+  - oauth
+---
+
 # Configuration
 
 Two files live beside `stream.py`, both created by `--install` and never committed:

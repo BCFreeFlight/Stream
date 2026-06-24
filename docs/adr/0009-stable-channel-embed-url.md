@@ -1,3 +1,15 @@
+---
+title: "ADR-0009: Use the channel-based stable embed URL"
+description: Documents the decision to use a channel-based embed URL that remains stable across daily broadcast rotations.
+category: adr
+tags:
+  - embed
+  - broadcast
+  - youtube
+  - accepted
+  - streams
+---
+
 # ADR-0009: Use the channel-based stable embed URL
 
 **Status:** Accepted

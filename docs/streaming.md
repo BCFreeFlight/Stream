@@ -1,3 +1,15 @@
+---
+title: Streaming & ffmpeg
+description: Covers ffmpeg command construction, mute behavior, RTSP credential encoding, output relay, retry loop logic, and stream activation for the BC Free Flight Stream project.
+category: reference
+tags:
+  - ffmpeg
+  - streaming
+  - rtsp
+  - retry
+  - rtmp
+---
+
 # Streaming & ffmpeg
 
 ## ffmpeg command

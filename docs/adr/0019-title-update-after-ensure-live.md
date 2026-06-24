@@ -1,3 +1,15 @@
+---
+title: "ADR-0019: Update broadcast title after ensuring live"
+description: Documents the decision to move broadcast title updates after the ensure-live step so the correct broadcast ID is used and archived VODs are not overwritten.
+category: adr
+tags:
+  - broadcast
+  - youtube
+  - title-update
+  - accepted
+  - lifecycle
+---
+
 # ADR-0019: Update broadcast title after ensuring live
 
 **Status:** Accepted · Refs: issue #35, PR #36

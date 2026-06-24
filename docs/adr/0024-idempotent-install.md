@@ -1,3 +1,15 @@
+---
+title: "ADR-0024: Make `--install` fully idempotent"
+description: Documents the decision to make the --install command safe to re-run by loading existing config, reusing credentials, and avoiding duplicate resource creation.
+category: adr
+tags:
+  - install
+  - idempotent
+  - oauth
+  - cron
+  - accepted
+---
+
 # ADR-0024: Make `--install` fully idempotent
 
 **Status:** Accepted · Refs: PR #22

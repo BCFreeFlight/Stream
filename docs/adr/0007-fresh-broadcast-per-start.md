@@ -1,3 +1,15 @@
+---
+title: "ADR-0007: Create a fresh broadcast on every --start"
+description: Documents the decision to retire and recreate YouTube broadcasts on every --start while reusing the permanent stream resource.
+category: adr
+tags:
+  - broadcast
+  - youtube
+  - accepted
+  - streams
+  - lifecycle
+---
+
 # ADR-0007: Create a fresh broadcast on every `--start`
 
 **Status:** Accepted · Refs: PR #15, PR #8

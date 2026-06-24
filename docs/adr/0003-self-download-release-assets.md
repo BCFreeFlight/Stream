@@ -1,3 +1,15 @@
+---
+title: "ADR-0003: Self-download companion release assets"
+description: Documents the decision to have stream.py automatically download companion release assets on first use rather than requiring users to fetch them manually.
+category: adr
+tags:
+  - accepted
+  - release
+  - assets
+  - install
+  - resources
+---
+
 # ADR-0003: Self-download companion release assets
 
 **Status:** Accepted · Refs: issue #3, PR #4
