@@ -1,3 +1,15 @@
+---
+title: "ADR-0012: Resolve stream ID from the key at runtime"
+description: Documents the decision to persist only the stream key in config and resolve the stream ID at runtime by matching against the YouTube live streams list.
+category: adr
+tags:
+  - streams
+  - youtube
+  - runtime
+  - accepted
+  - configuration
+---
+
 # ADR-0012: Resolve stream ID from the key at runtime
 
 **Status:** Accepted · Refs: PR #18, PR #28

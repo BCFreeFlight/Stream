@@ -1,3 +1,14 @@
+---
+title: Architecture Decision Records
+description: Index of all architecture decision records explaining the key design choices behind the BC Free Flight Stream project.
+category: overview
+tags:
+  - adr
+  - architecture
+  - decisions
+  - index
+---
+
 # Architecture Decision Records
 
 Each ADR captures one significant decision: its context, the choice made, and the consequences. They explain **why** the code is shaped the way it is. Many trace back to specific issues/PRs in [BCFreeFlight/Stream](https://github.com/BCFreeFlight/Stream).

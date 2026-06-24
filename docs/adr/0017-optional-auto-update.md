@@ -1,3 +1,14 @@
+---
+title: "ADR-0017: Auto-update cron is opt-in"
+description: Documents the decision to make the automatic update cron entry opt-in via the cron.autoUpdate config flag, defaulting to false to prevent unattended updates without operator consent.
+category: adr
+tags:
+  - cron
+  - auto-update
+  - configuration
+  - accepted
+---
+
 # ADR-0017: Auto-update cron is opt-in
 
 **Status:** Accepted · Refs: PR #21

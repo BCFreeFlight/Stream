@@ -1,3 +1,15 @@
+---
+title: YouTube Broadcast Lifecycle
+description: Documents the full lifecycle of YouTube broadcast and stream resources, including state transitions during install, start, and stop operations.
+category: reference
+tags:
+  - broadcast
+  - youtube
+  - streams
+  - ffmpeg
+  - lifecycle
+---
+
 # YouTube Broadcast Lifecycle
 
 ## Two resources

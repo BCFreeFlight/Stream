@@ -1,3 +1,14 @@
+---
+title: "ADR-0023: Dynamic patch versioning in the release workflow"
+description: Records the decision to automate patch version incrementing in the GitHub release workflow by reading the latest tag from the GitHub API at build time.
+category: adr
+tags:
+  - versioning
+  - github-actions
+  - release
+  - accepted
+---
+
 # ADR-0023: Dynamic patch versioning in the release workflow
 
 **Status:** Accepted · Refs: PR #5, PR #10

@@ -1,3 +1,15 @@
+---
+title: Authentication
+description: Explains the Google OAuth 2.0 desktop-app flow, token lifecycle, scopes, and secret hygiene used by the stream script.
+category: reference
+tags:
+  - oauth
+  - google
+  - tokens
+  - authentication
+  - credentials
+---
+
 # Authentication
 
 Google OAuth 2.0, Desktop-app flow. Credentials are split between `config.toml` (client ID) and `.env` (secret + tokens).

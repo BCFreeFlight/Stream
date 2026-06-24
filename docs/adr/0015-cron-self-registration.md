@@ -1,3 +1,14 @@
+---
+title: "ADR-0015: Marker-based cron self-registration"
+description: Documents the decision to use marker-based crontab entries for idempotent self-registration and removal of scheduled jobs.
+category: adr
+tags:
+  - cron
+  - scheduling
+  - install
+  - accepted
+---
+
 # ADR-0015: Marker-based cron self-registration
 
 **Status:** Accepted

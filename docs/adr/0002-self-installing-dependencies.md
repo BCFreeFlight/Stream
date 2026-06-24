@@ -1,3 +1,15 @@
+---
+title: "ADR-0002: Self-install Python dependencies at runtime"
+description: Documents the decision to have stream.py automatically detect and pip-install missing Python dependencies before importing them.
+category: adr
+tags:
+  - dependencies
+  - pip
+  - accepted
+  - bootstrap
+  - single-file
+---
+
 # ADR-0002: Self-install Python dependencies at runtime
 
 **Status:** Accepted · Refs: PR #12

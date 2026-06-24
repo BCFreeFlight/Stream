@@ -1,3 +1,15 @@
+---
+title: BC Free Flight Stream
+description: Overview and quick-start guide for a self-contained Python script that proxies an RTSP camera stream to YouTube Live via ffmpeg with automated broadcast management and OAuth 2.0 authentication.
+category: overview
+tags:
+  - youtube
+  - oauth
+  - ffmpeg
+  - rtsp
+  - cron
+---
+
 # BC Free Flight Stream
 
 A self-contained Python script that proxies an RTSP camera stream to YouTube Live via ffmpeg. It manages the YouTube broadcast lifecycle, handles OAuth 2.0 authentication, retries automatically on failure, and self-registers daily cron jobs for unattended operation.

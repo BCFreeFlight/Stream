@@ -1,3 +1,15 @@
+---
+title: Updates & Rollback
+description: Explains how the script self-updates from GitHub Releases and how to roll back to a previous version using versioned backups.
+category: guide
+tags:
+  - update
+  - rollback
+  - versioning
+  - backup
+  - github-releases
+---
+
 # Updates & Rollback
 
 The script updates itself in place from GitHub Releases, with versioned backups for safe rollback.

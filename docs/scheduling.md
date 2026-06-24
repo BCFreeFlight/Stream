@@ -1,3 +1,15 @@
+---
+title: Scheduling
+description: Explains how cron entries are self-registered for unattended stream start, stop, recover, and optional auto-update jobs across the flying season.
+category: reference
+tags:
+  - cron
+  - scheduling
+  - recovery
+  - auto-update
+  - install
+---
+
 # Scheduling
 
 `--install` self-registers cron entries so the stream runs unattended. The default schedule is **April 1 – October 31** (the flying season).

@@ -1,3 +1,14 @@
+---
+title: Logging
+description: Reference for log output format, levels, retention, and secret hygiene in the BC Free Flight Stream script.
+category: reference
+tags:
+  - logging
+  - ffmpeg
+  - configuration
+  - retention
+---
+
 # Logging
 
 ## Output

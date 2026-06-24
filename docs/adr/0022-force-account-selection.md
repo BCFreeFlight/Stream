@@ -1,3 +1,14 @@
+---
+title: "ADR-0022: Force Google account selection on OAuth"
+description: Documents the decision to always pass prompt="select_account" during OAuth to prevent silent account reuse on multi-account machines.
+category: adr
+tags:
+  - oauth
+  - google
+  - authentication
+  - accepted
+---
+
 # ADR-0022: Force Google account selection on OAuth
 
 **Status:** Accepted · Refs: PR #16

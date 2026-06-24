@@ -1,3 +1,15 @@
+---
+title: Installation
+description: Step-by-step guide to installing and configuring the BC Free Flight Stream script, including Google Cloud setup, OAuth authentication, and cron registration.
+category: guide
+tags:
+  - installation
+  - oauth
+  - ffmpeg
+  - cron
+  - youtube
+---
+
 # Installation
 
 ## Requirements

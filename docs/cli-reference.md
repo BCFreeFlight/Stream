@@ -1,3 +1,15 @@
+---
+title: CLI Reference
+description: Complete reference for all command-line switches supported by stream.py, including their behavior and sequencing.
+category: reference
+tags:
+  - cli
+  - install
+  - streaming
+  - cron
+  - configuration
+---
+
 # CLI Reference
 
 Exactly one command switch is required per invocation (mutually exclusive). `--log-level` is an optional modifier.

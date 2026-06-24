@@ -1,3 +1,15 @@
+---
+title: Process Management
+description: Describes how stream.pid and stream.stop coordinate the single foreground stream process, signal handling, and graceful shutdown sequencing.
+category: reference
+tags:
+  - process-management
+  - signals
+  - pid
+  - sentinel
+  - ffmpeg
+---
+
 # Process Management
 
 Two files coordinate the single foreground `--start` process and out-of-band control.
