@@ -203,18 +203,21 @@ class TestHighLevelOrchestration:
 
     @patch("stream.apply_broadcast_embeddable")
     @patch("stream._api_insert_broadcast")
-    def test_create_broadcast_skips_apply_when_embeddable_true(
+    def test_create_broadcast_always_calls_apply_embeddable(
         self, mock_insert, mock_embed, sample_config, mock_logger
     ):
-        """create_broadcast skips apply_broadcast_embeddable when embeddable=True.
+        """create_broadcast always calls apply_broadcast_embeddable regardless of embeddable value.
 
-        The YouTube insert API defaults enableEmbed to True, so no update call
-        is needed — and it would fail without channel verification anyway.
+        Both enableEmbed and enableDvr must be explicitly confirmed on every broadcast creation
+        to ensure correct behavior for existing broadcasts and to avoid relying on API defaults.
         """
         sample_config["youtube"]["embeddable"] = True
         mock_insert.return_value = {"id": "bcast-2"}
-        stream.create_broadcast(MagicMock(), sample_config, mock_logger)
-        mock_embed.assert_not_called()
+        yt = MagicMock()
+        stream.create_broadcast(yt, sample_config, mock_logger)
+        enable_monitor = sample_config["youtube"]["enableMonitorStream"]
+        enable_dvr = sample_config["youtube"]["enableDvr"]
+        mock_embed.assert_called_once_with(yt, "bcast-2", True, enable_monitor, enable_dvr, mock_logger)
 
     @patch("stream.apply_broadcast_embeddable")
     @patch("stream._api_insert_broadcast")
