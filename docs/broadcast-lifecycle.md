@@ -64,7 +64,7 @@ Completing on stop is what makes past streams watchable on the channel. See [ADR
 
 ## Embeddable: two flags
 
-Embedding requires **both** the broadcast-level and video-level `embeddable` flags to be true. Mobile browsers enforce the video-level flag strictly; desktop is lenient. The video resource is created asynchronously, so the script polls until it exists before setting its flag. See [ADR-0010](adr/0010-embeddable-dual-flag.md).
+Embedding requires **both** the broadcast-level and video-level `embeddable` flags to be true. Mobile browsers enforce the video-level flag strictly; desktop is lenient. The script calls `apply_broadcast_embeddable()` unconditionally after every broadcast creation, setting both `enableEmbed` and `enableDvr` explicitly via `liveBroadcasts.update`. This ensures the configured values take effect even on broadcasts created before v0.1.21, which retain YouTube's default DVR-enabled state. The video-level flag is set separately via `videos.update`, polling until the async-created video resource appears. See [ADR-0010](adr/0010-embeddable-dual-flag.md).
 
 ## Retry behavior
 
