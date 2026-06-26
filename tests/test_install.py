@@ -1004,23 +1004,22 @@ class TestGetBroadcastSnippet:
     def test_returns_snippet_when_items_present(self):
         """Returns the snippet dict from the first item."""
         mock_youtube = MagicMock()
-        mock_list = MagicMock()
-        mock_list.execute.return_value = {
-            "items": [{"snippet": {"title": "Test Broadcast"}}]
-        }
-        mock_youtube.liveBroadcasts().list.return_value = mock_list
 
         result = stream._api_get_broadcast_snippet(mock_youtube, "bcast-123")
 
         assert result == {"title": "Test Broadcast"}
-        mock_list.assert_called_once_with(part="snippet", id="bcast-123")
+        mock_youtube.liveBroadcasts().list.assert_called_once_with(
+            part="snippet", id="bcast-123"
+        )
 
     def test_returns_none_when_no_items(self):
         """Returns None when the API returns no items."""
         mock_youtube = MagicMock()
+
+        # Override the fixture's default return to simulate empty items
         mock_list = MagicMock()
         mock_list.execute.return_value = {"items": []}
-        mock_youtube.liveBroadcasts().list.return_value = mock_list
+        type(mock_youtube).liveBroadcasts().list.return_value = mock_list
 
         result = stream._api_get_broadcast_snippet(mock_youtube, "bcast-123")
 
@@ -1116,16 +1115,20 @@ class TestPromptStreamSection:
 
     @patch("stream._smart_prompt")
     def test_prompts_for_mute_when_missing(self, mock_smart):
-        """When mute is not in existing config, prompts for yes/no."""
+        """When mute is not in existing config, prompts for yes/no via input()."""
         mock_smart.side_effect = [
             "rtsp://camera",  # rtspUrl (first call)
             "copy",           # videoCodec
             "copy",           # audioCodec
         ]
 
-        result = stream._prompt_stream_section({}, self._make_res())
+        with patch("builtins.input", return_value="yes"):
+            result = stream._prompt_stream_section({}, self._make_res())
 
         rtsp_url, video_codec, audio_codec, mute = result
         # _smart_prompt called 3 times for the first three fields;
-        # mute prompt uses _prompt (not _smart_prompt) with yes_no validator
-
+        # mute prompt uses input() with yes_no validator, returns True for "yes"
+        assert rtsp_url == "rtsp://camera"
+        assert video_codec == "copy"
+        assert audio_codec == "copy"
+        assert mute is True
