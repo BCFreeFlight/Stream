@@ -119,6 +119,12 @@ Secrets live in `.env`, created by `--install`. See [`example.env`](src/example.
 
 ## Usage
 
+The script accepts the following commands:
+
+| Command | Behavior |
+|---------|----------|
+| no arguments | launches web UI at localhost:8765 |
+
 ### Start the stream
 
 ```bash
