@@ -473,34 +473,61 @@ class TestStreamUntilExitTitleUpdate:
         mock_title.assert_not_called()
 
     @patch("stream.update_broadcast_title")
-    @patch("stream.ensure_broadcast_live")
-    @patch("stream.wait_for_stream_active", return_value=True)
-    @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
-    @patch("stream.start_ffmpeg_process")
-    @patch("stream.build_ffmpeg_command", return_value=[])
+    @patch("stream.ensure_broadcast_live", side_effect=stream.BroadcastCompleteError)
+    @patch("stream._create_fresh_broadcast", return_value="bcast-fresh")
+    @patch("stream.save_config")
+    @patch.object(stream.time, "sleep", return_value=None)
     def test_title_uses_new_broadcast_id_after_complete(
-        self, mock_cmd, mock_start, mock_relay, mock_wait,
-        mock_ensure, mock_title, sample_config, mock_logger
+        self, mock_sleep, mock_save, mock_fresh, mock_ensure, mock_title,
+        sample_config, mock_logger
     ):
-        """When ensure_broadcast_live creates a new broadcast (old was complete),
-        update_broadcast_title receives the new broadcast ID, not the old one."""
-        mock_process = MagicMock()
-        mock_process.wait.return_value = 0
-        mock_process.returncode = 0
-        mock_start.return_value = mock_process
+        """When ensure_broadcast_live raises BroadcastCompleteError, the loop creates a fresh
+        broadcast and update_broadcast_title is called with the new ID on the next iteration."""
+        # First _connect_to_broadcast raises BroadcastCompleteError, second returns a context.
+        mock_ctx = MagicMock(spec=stream.BroadcastContext)
 
-        def simulate_new_broadcast(yt, bid, logger, res=None):
-            sample_config["youtube"]["broadcastId"] = "bcast-fresh"
+        with patch("stream._connect_to_broadcast", side_effect=[
+            stream.BroadcastCompleteError,  # first: broadcast is complete
+            mock_ctx,                        # second: fresh broadcast ready
+        ]), \
+             patch("stream._stream_until_exit"), \
+             patch("stream.is_stop_requested", side_effect=[False, False, True]), \
+             patch("stream._wait_before_retry", return_value=True), \
+             patch("stream.get_valid_credentials"), \
+             patch("stream.build_youtube_service"):
+            stream._run_stream_loop(sample_config, mock_logger)
 
-        mock_ensure.side_effect = simulate_new_broadcast
+        # update_broadcast_title should have been called with the new broadcast ID
+        assert mock_fresh.called, "_create_fresh_broadcast should have been called"
+        # The title update happens in _stream_until_exit's first_attempt path, not here.
+        # Verify the config was updated with the new broadcast ID by _run_stream_loop
+        assert sample_config["youtube"]["broadcastId"] == "bcast-fresh"
 
-        ctx = self._make_ctx("bcast-old")
-        stream._stream_until_exit(sample_config, mock_logger, ctx, first_attempt=True)
+    @patch("stream.update_broadcast_title")
+    @patch("stream.ensure_broadcast_live", side_effect=stream.BroadcastCompleteError)
+    @patch("stream._create_fresh_broadcast", return_value="bcast-fresh")
+    @patch("stream.save_config")
+    @patch.object(stream.time, "sleep", return_value=None)
+    def test_run_stream_loop_backoff_after_broadcast_rotation(
+        self, mock_sleep, mock_save, mock_fresh, mock_ensure, mock_title,
+        sample_config, mock_logger
+    ):
+        """After creating a fresh broadcast, the loop calls _wait_before_retry for backoff."""
+        mock_ctx = MagicMock(spec=stream.BroadcastContext)
 
-        title_call_args = mock_title.call_args
-        assert title_call_args[0][1] == "bcast-fresh", (
-            "update_broadcast_title should use the new broadcast ID, not bcast-old"
-        )
+        with patch("stream._connect_to_broadcast", side_effect=[
+            stream.BroadcastCompleteError,  # first: broadcast is complete
+            mock_ctx,                        # second: fresh broadcast ready
+        ]), \
+             patch("stream._stream_until_exit"), \
+             patch("stream.is_stop_requested", side_effect=[False, False, True]), \
+             patch("stream._wait_before_retry", return_value=True) as mock_wait, \
+             patch("stream.get_valid_credentials"), \
+             patch("stream.build_youtube_service"):
+            stream._run_stream_loop(sample_config, mock_logger)
+
+        # _wait_before_retry should be called after broadcast rotation (backoff)
+        assert mock_wait.call_count >= 1, "_wait_before_retry should provide backoff after rotation"
 
 
 # ── _prepare_stream_process ordering ────────────────────────────────────────

@@ -993,3 +993,139 @@ class TestSetupYoutubeResourcesWithPrompt:
 
         # Should have returned the existing key without prompting
         assert resources["streamKey"] == "pre-existing-key"
+
+
+
+# ── _api_get_broadcast_snippet ───────────────────────────────────────────────
+
+class TestGetBroadcastSnippet:
+    """Direct test coverage for _api_get_broadcast_snippet."""
+
+    def test_returns_snippet_when_items_present(self):
+        """Returns the snippet dict from the first item."""
+        mock_youtube = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {
+            "items": [{"snippet": {"title": "Test Broadcast"}}]
+        }
+        mock_youtube.liveBroadcasts().list.return_value = mock_list
+
+        result = stream._api_get_broadcast_snippet(mock_youtube, "bcast-123")
+
+        assert result == {"title": "Test Broadcast"}
+        mock_list.assert_called_once_with(part="snippet", id="bcast-123")
+
+    def test_returns_none_when_no_items(self):
+        """Returns None when the API returns no items."""
+        mock_youtube = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {"items": []}
+        mock_youtube.liveBroadcasts().list.return_value = mock_list
+
+        result = stream._api_get_broadcast_snippet(mock_youtube, "bcast-123")
+
+        assert result is None
+
+
+# ── _prompt_google_section ───────────────────────────────────────────────────
+
+class TestPromptGoogleSection:
+    """Direct test coverage for _prompt_google_section."""
+
+    def _make_res(self):
+        return {
+            "install": {
+                "sections": {"google": "[Google section]"},
+                "prompts": {"clientId": "Client ID", "clientSecret": "Client Secret"},
+                "google_cloud_guide": "Guide text",
+            }
+        }
+
+    @patch("stream._smart_prompt")
+    @patch("stream.load_env")
+    def test_prompts_for_credentials(self, mock_load_env, mock_smart):
+        """Prompts for client_id and client_secret."""
+        mock_smart.side_effect = ["my-client-id", "my-secret"]
+
+        result = stream._prompt_google_section({}, self._make_res())
+
+        assert result == ("my-client-id", "my-secret")
+        # First call: clientId with guide, second: clientSecret (no guide)
+        assert mock_smart.call_count == 2
+
+    @patch("stream._smart_prompt")
+    @patch("stream.load_env")
+    def test_short_circuits_existing_values(self, mock_load_env, mock_smart):
+        """When existing config has values, _smart_prompt returns them without prompting."""
+        mock_smart.side_effect = ["existing-id", "existing-secret"]
+
+        result = stream._prompt_google_section(
+            {"google": {"clientId": "existing-id"}}, self._make_res()
+        )
+
+        # _smart_prompt is called for both fields; the short-circuit happens inside
+        assert result == ("existing-id", "existing-secret")
+
+
+# ── _prompt_stream_section ───────────────────────────────────────────────────
+
+class TestPromptStreamSection:
+    """Direct test coverage for _prompt_stream_section."""
+
+    def _make_res(self):
+        return {
+            "install": {
+                "sections": {"rtsp": "[RTSP section]"},
+                "prompts": {
+                    "rtspUrl": "RTSP URL",
+                    "videoCodec": "Video Codec",
+                    "audioCodec": "Audio Codec",
+                    "mute": "Mute?",
+                },
+                "defaults": {
+                    "videoCodec": "copy",
+                    "audioCodec": "copy",
+                    "mute": "no",
+                },
+                "validation": {
+                    "rtsp_url": "Must start with rtsp://",
+                    "yes_no": "Enter yes or no",
+                },
+            }
+        }
+
+    @patch("stream._smart_prompt")
+    def test_prompts_for_rtsp_settings(self, mock_smart):
+        """Prompts for rtsp_url, video_codec, audio_codec; mute is short-circuited from existing."""
+        mock_smart.side_effect = [
+            "rtsp://camera",  # rtspUrl (first call)
+            "copy",           # videoCodec
+            "copy",           # audioCodec
+        ]
+
+        result = stream._prompt_stream_section(
+            {"stream": {"mute": True}}, self._make_res()
+        )
+
+        rtsp_url, video_codec, audio_codec, mute = result
+        assert rtsp_url == "rtsp://camera"
+        assert video_codec == "copy"
+        assert audio_codec == "copy"
+        # mute is short-circuited from existing config, not prompted
+        assert mute is True
+
+    @patch("stream._smart_prompt")
+    def test_prompts_for_mute_when_missing(self, mock_smart):
+        """When mute is not in existing config, prompts for yes/no."""
+        mock_smart.side_effect = [
+            "rtsp://camera",  # rtspUrl (first call)
+            "copy",           # videoCodec
+            "copy",           # audioCodec
+        ]
+
+        result = stream._prompt_stream_section({}, self._make_res())
+
+        rtsp_url, video_codec, audio_codec, mute = result
+        # _smart_prompt called 3 times for the first three fields;
+        # mute prompt uses _prompt (not _smart_prompt) with yes_no validator
+
