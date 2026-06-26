@@ -102,6 +102,12 @@ except ModuleNotFoundError:
 
 __version__ = "dev"
 
+
+class BroadcastCompleteError(RuntimeError):
+    """Raised when a broadcast is in complete state and must be replaced."""
+    pass
+
+
 GITHUB_REPO = "BCFreeFlight/Stream"
 
 SCOPES = [
@@ -975,7 +981,7 @@ def ensure_broadcast_live(youtube, broadcast_id, logger, res=None):
     if status == "complete":
         errors = res["errors"] if res else {}
         msg = errors.get("broadcast_complete", "Broadcast is complete and must be replaced first") if errors else f"Broadcast {broadcast_id} is complete — create a new one before transitioning to live"
-        raise RuntimeError(msg)
+        raise BroadcastCompleteError(msg)
 
     errors = res["errors"] if res else {}
     msg = errors.get("broadcast_unexpected", "").format(
@@ -1602,8 +1608,6 @@ def prompt_all_config_values(res, existing=None):
     Returns:
         tuple: (config_dict, client_secret)
     """
-    ex = existing or {}
-
     # ── Google OAuth ──
     client_id, client_secret = _prompt_google_section(existing, res)
 
@@ -1631,22 +1635,22 @@ def prompt_all_config_values(res, existing=None):
             "privacy": privacy.lower() if isinstance(privacy, str) else privacy,
             "categoryId": category_id,
             "enableMonitorStream": _get_nested(
-                ex, "youtube", "enableMonitorStream", default=False
+                existing or {}, "youtube", "enableMonitorStream", default=False
             ),
-            "embeddable": _get_nested(ex, "youtube", "embeddable", default=True),
+            "embeddable": _get_nested(existing or {}, "youtube", "embeddable", default=True),
             "enableDvr": enable_dvr,
             "archivePrivacy": archive_privacy.lower() if isinstance(archive_privacy, str) else archive_privacy,
             "broadcastId": broadcast_id,
-            "streamURL": _get_nested(ex, "youtube", "streamURL"),
-            "backupStreamUrl": _get_nested(ex, "youtube", "backupStreamUrl"),
-            "streamKey": _get_nested(ex, "youtube", "streamKey"),
+            "streamURL": _get_nested(existing or {}, "youtube", "streamURL"),
+            "backupStreamUrl": _get_nested(existing or {}, "youtube", "backupStreamUrl"),
+            "streamKey": _get_nested(existing or {}, "youtube", "streamKey"),
         },
-        "pidFile": _get_nested(ex, "pidFile", default="./stream.pid"),
-        "stopSentinel": _get_nested(ex, "stopSentinel", default="./stream.stop"),
-        "logDir": _get_nested(ex, "logDir", default="./logs"),
-        "logRetentionDays": _get_nested(ex, "logRetentionDays", default=15),
-        "retryDelaySecs": _get_nested(ex, "retryDelaySecs", default=5),
-        "terminal": _get_nested(ex, "terminal", default="gnome-terminal"),
+        "pidFile": _get_nested(existing or {}, "pidFile", default="./stream.pid"),
+        "stopSentinel": _get_nested(existing or {}, "stopSentinel", default="./stream.stop"),
+        "logDir": _get_nested(existing or {}, "logDir", default="./logs"),
+        "logRetentionDays": _get_nested(existing or {}, "logRetentionDays", default=15),
+        "retryDelaySecs": _get_nested(existing or {}, "retryDelaySecs", default=5),
+        "terminal": _get_nested(existing or {}, "terminal", default="gnome-terminal"),
         "cron": {
             "enabled": cron_enabled,
             "start": cron_start,
@@ -2141,32 +2145,34 @@ def _run_stream_loop(config, logger, res=None):
                 break
 
             _stream_until_exit(config, logger, ctx, res, first_attempt=(attempt == 0))
-        except RuntimeError as exc:
-            # A complete broadcast raises RuntimeError from ensure_broadcast_live.
+        except BroadcastCompleteError:
+            # A complete broadcast raises BroadcastCompleteError from ensure_broadcast_live.
             # Catch it here, create a fresh broadcast, and retry the loop.
-            msg = str(exc)
-            if "complete" in msg.lower():
-                logger.info(f"Broadcast is complete — creating a fresh one")
-                try:
-                    creds = get_valid_credentials(config, logger)
-                    youtube = build_youtube_service(creds)
-                except Exception as auth_exc:
-                    logger.warn(f"Could not authenticate for broadcast replacement: {auth_exc}")
-                    break
+            logger.info("Broadcast is complete — creating a fresh one")
+            try:
+                creds = get_valid_credentials(config, logger)
+                youtube = build_youtube_service(creds)
+            except Exception as auth_exc:
+                logger.warn(f"Could not authenticate for broadcast replacement: {auth_exc}")
+                break
 
-                new_id = _create_fresh_broadcast(youtube, config, logger)
-                config["youtube"]["broadcastId"] = new_id
-                save_config(config)
-                logger.info(f"Config updated with new broadcast ID: {new_id}")
+            new_id = _create_fresh_broadcast(youtube, config, logger)
+            config["youtube"]["broadcastId"] = new_id
+            save_config(config)
+            logger.info(f"Config updated with new broadcast ID: {new_id}")
 
-                # Clean up ffmpeg before retrying
-                _cleanup_ffmpeg()
+            # Clean up ffmpeg before retrying
+            _cleanup_ffmpeg()
 
-                if is_stop_requested(config):
-                    break
-                # Continue the loop — attempt stays 0 so title gets updated on retry
-                continue
+            if is_stop_requested(config):
+                break
+            # Add a small backoff before retrying to avoid spinning if the new broadcast
+            # is also immediately rejected (race condition where it's archived externally).
+            time.sleep(1)
+            # Continue the loop — attempt stays 0 so title gets updated on retry
+            continue
 
+        except RuntimeError as exc:
             logger.warn(f"Streaming error: {exc}")
             _cleanup_ffmpeg()
         except Exception as exc:
@@ -2200,7 +2206,7 @@ def _cleanup_orphaned_broadcasts_safely(config, logger):
         logger.warn(f"Orphaned broadcast cleanup failed: {exc}")
 
 
-def _complete_broadcast_if_active(youtube, broadcast_id, logger):
+def _transition_to_complete_if_active(youtube, broadcast_id, logger):
     """Transition the broadcast to complete if it is in an active state."""
     return _transition_to_complete_if_active(youtube, broadcast_id, logger)
 
@@ -2209,7 +2215,9 @@ def _transition_to_complete_if_active(youtube, broadcast_id, logger):
     """Transition the broadcast to complete if it is in an active state.
 
     Active states are: live, ready, testing, created.
-    Returns True if the transition was performed, False otherwise.
+    Returns the original broadcast status if a transition was performed,
+    or False otherwise — allowing callers to distinguish which state the
+    broadcast was in before transition.
     """
     if not broadcast_id:
         return False
@@ -2218,7 +2226,7 @@ def _transition_to_complete_if_active(youtube, broadcast_id, logger):
         return False
     _api_transition_broadcast(youtube, broadcast_id, "complete")
     logger.info(f"Retired active broadcast {broadcast_id} (was {status})")
-    return True
+    return status
 
 
 def _retire_current_broadcast_safely(config, logger):
@@ -2227,7 +2235,7 @@ def _retire_current_broadcast_safely(config, logger):
         creds = get_valid_credentials(config, logger)
         youtube = build_youtube_service(creds)
         broadcast_id = config["youtube"].get("broadcastId", "")
-        _complete_broadcast_if_active(youtube, broadcast_id, logger)
+        _transition_to_complete_if_active(youtube, broadcast_id, logger)
     except Exception as exc:
         logger.warn(f"Could not retire current broadcast: {exc}")
 
@@ -2311,7 +2319,8 @@ def _complete_broadcast(config, logger):
         status = _api_get_broadcast_lifecycle(youtube, broadcast_id)
         logger.debug(f"Broadcast lifecycle status: {status}")
 
-        if not _transition_to_complete_if_active(youtube, broadcast_id, logger):
+        pre_status = _transition_to_complete_if_active(youtube, broadcast_id, logger)
+        if not pre_status:
             # Transition was skipped — check if it's already complete or in an invalid state.
             if status == "complete":
                 logger.debug("Broadcast is already complete")
@@ -2319,8 +2328,12 @@ def _complete_broadcast(config, logger):
                 logger.warn(f"Broadcast in state '{status}' — cannot complete")
             return
 
-        archive_privacy = config["youtube"].get("archivePrivacy", "private")
-        _set_archive_privacy(youtube, broadcast_id, archive_privacy, logger)
+        # Only set archive privacy when the broadcast was actually live.
+        # Transitions from ready/testing/created mean the stream never went live,
+        # and YouTube's transition API may reject privacy updates on non-live broadcasts.
+        if pre_status == "live":
+            archive_privacy = config["youtube"].get("archivePrivacy", "private")
+            _set_archive_privacy(youtube, broadcast_id, archive_privacy, logger)
     except Exception as exc:
         logger.warn(f"Could not complete broadcast: {exc}")
 
