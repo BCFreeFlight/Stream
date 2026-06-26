@@ -1415,13 +1415,12 @@ def _prompt_google_section(existing_config, res):
         tuple: (client_id, client_secret)
     """
     prompts = res["install"]["prompts"]
-    ex = existing_config or {}
 
     print(res["install"]["sections"]["google"])
     load_env()
     client_id = _smart_prompt(
         prompts["clientId"],
-        _get_nested(ex, "google", "clientId"),
+        _get_nested(existing_config, "google", "clientId"),
         guide=res["install"]["google_cloud_guide"],
     )
     existing_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -1441,7 +1440,6 @@ def _prompt_stream_section(existing_config, res):
     prompts = res["install"]["prompts"]
     defaults = res["install"]["defaults"]
     validation = res["install"]["validation"]
-    ex = existing_config or {}
 
     print(res["install"]["sections"]["rtsp"])
     rtsp_validator = _make_validator(
@@ -1449,21 +1447,21 @@ def _prompt_stream_section(existing_config, res):
     )
     rtsp_url = _smart_prompt(
         prompts["rtspUrl"],
-        _get_nested(ex, "stream", "rtspUrl"),
+        _get_nested(existing_config, "stream", "rtspUrl"),
         validator=rtsp_validator,
     )
     rtsp_url = encode_rtsp_credentials(rtsp_url)
     video_codec = _smart_prompt(
         prompts["videoCodec"],
-        _get_nested(ex, "stream", "videoCodec"),
+        _get_nested(existing_config, "stream", "videoCodec"),
         default=defaults["videoCodec"],
     )
     audio_codec = _smart_prompt(
         prompts["audioCodec"],
-        _get_nested(ex, "stream", "audioCodec"),
+        _get_nested(existing_config, "stream", "audioCodec"),
         default=defaults["audioCodec"],
     )
-    existing_mute = _get_nested(ex, "stream", "mute", default=None)
+    existing_mute = _get_nested(existing_config, "stream", "mute", default=None)
     if existing_mute is not None:
         mute = existing_mute
     else:
@@ -1487,7 +1485,6 @@ def _prompt_youtube_section(existing_config, res):
     prompts = res["install"]["prompts"]
     defaults = res["install"]["defaults"]
     validation = res["install"]["validation"]
-    ex = existing_config or {}
 
     print(res["install"]["sections"]["youtube_broadcast"])
     privacy_validator = _make_validator(
@@ -1496,17 +1493,17 @@ def _prompt_youtube_section(existing_config, res):
 
     title = _smart_prompt(
         prompts["broadcastTitle"],
-        _get_nested(ex, "youtube", "broadcastTitle"),
+        _get_nested(existing_config, "youtube", "broadcastTitle"),
         default=defaults["broadcastTitle"],
         guide=res["install"]["broadcast_title_guide"],
     )
     privacy = _smart_prompt(
         prompts["privacy"],
-        _get_nested(ex, "youtube", "privacy"),
+        _get_nested(existing_config, "youtube", "privacy"),
         default=defaults["privacy"],
         validator=privacy_validator,
     )
-    existing_dvr = _get_nested(ex, "youtube", "enableDvr", default=None)
+    existing_dvr = _get_nested(existing_config, "youtube", "enableDvr", default=None)
     if existing_dvr is not None:
         enable_dvr = existing_dvr
     else:
@@ -1519,18 +1516,18 @@ def _prompt_youtube_section(existing_config, res):
         enable_dvr = dvr_str.lower() == "yes"
     archive_privacy = _smart_prompt(
         prompts["archivePrivacy"],
-        _get_nested(ex, "youtube", "archivePrivacy"),
+        _get_nested(existing_config, "youtube", "archivePrivacy"),
         default=defaults["archivePrivacy"],
         validator=privacy_validator,
     )
     category_id = _smart_prompt(
         prompts["categoryId"],
-        _get_nested(ex, "youtube", "categoryId"),
+        _get_nested(existing_config, "youtube", "categoryId"),
         default=defaults["categoryId"],
     )
     broadcast_id = _smart_prompt(
         prompts["broadcastId"],
-        _get_nested(ex, "youtube", "broadcastId"),
+        _get_nested(existing_config, "youtube", "broadcastId"),
         default=defaults["broadcastId"],
     )
 
@@ -1545,14 +1542,13 @@ def _prompt_cron_section(existing_config, res):
     """
     prompts = res["install"]["prompts"]
     defaults = res["install"]["defaults"]
-    ex = existing_config or {}
 
     print(res["install"]["sections"]["schedule"])
     yes_no_validator = _make_validator(
         lambda v: v.lower() in ("yes", "no"), res["install"]["validation"]["yes_no"]
     )
 
-    existing_cron_enabled = _get_nested(ex, "cron", "enabled", default=None)
+    existing_cron_enabled = _get_nested(existing_config, "cron", "enabled", default=None)
     if existing_cron_enabled is not None:
         cron_enabled = existing_cron_enabled
     else:
@@ -1569,15 +1565,15 @@ def _prompt_cron_section(existing_config, res):
         _show_guide(res["install"]["cron_guide"])
         cron_start = _smart_prompt(
             prompts["cronStart"],
-            _get_nested(ex, "cron", "start"),
+            _get_nested(existing_config, "cron", "start"),
             default=defaults["cronStart"],
         )
         cron_stop = _smart_prompt(
             prompts["cronStop"],
-            _get_nested(ex, "cron", "stop"),
+            _get_nested(existing_config, "cron", "stop"),
             default=defaults["cronStop"],
         )
-        existing_auto_update = _get_nested(ex, "cron", "autoUpdate", default=None)
+        existing_auto_update = _get_nested(existing_config, "cron", "autoUpdate", default=None)
         if existing_auto_update is not None:
             auto_update = existing_auto_update
         else:
@@ -1588,7 +1584,7 @@ def _prompt_cron_section(existing_config, res):
         if auto_update:
             cron_update = _smart_prompt(
                 prompts["cronUpdate"],
-                _get_nested(ex, "cron", "update"),
+                _get_nested(existing_config, "cron", "update"),
                 default=defaults["cronUpdate"],
             )
 
@@ -2166,9 +2162,10 @@ def _run_stream_loop(config, logger, res=None):
 
             if is_stop_requested(config):
                 break
-            # Add a small backoff before retrying to avoid spinning if the new broadcast
+            # Use a small backoff before retrying to avoid spinning if the new broadcast
             # is also immediately rejected (race condition where it's archived externally).
-            time.sleep(1)
+            _wait_before_retry(config, logger)
+
             # Continue the loop — attempt stays 0 so title gets updated on retry
             continue
 
