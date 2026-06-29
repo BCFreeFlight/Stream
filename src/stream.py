@@ -2303,8 +2303,8 @@ def do_update():
     try:
         if config.get("cron", {}).get("enabled"):
             register_cron_entries(config)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"Warning: cron re-registration failed: {exc}")
 
 
 # ── --roll-back Command ──────────────────────────────────────────────────────

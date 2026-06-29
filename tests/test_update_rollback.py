@@ -195,6 +195,27 @@ class TestDoUpdate:
         mock_load_config.assert_called_once()
         mock_register.assert_called_once_with(sample_config)
 
+    def test_do_update_passes_custom_cron_schedule(self, tmp_script_dir, sample_config, sample_resources):
+        """do_update passes the user's custom cron schedule to register_cron_entries."""
+        sample_config["cron"]["start"] = "0 8 * * *"
+        sample_config["cron"]["stop"] = "0 20 * * *"
+        (tmp_script_dir / "stream.py").write_text("# old")
+        (tmp_script_dir / "resources.toml").write_text("")
+
+        with patch.object(stream, "__version__", "v0.1.4"), \
+             patch("stream._get_latest_release_tag", return_value="v0.1.5"), \
+             patch("stream._backup_current_files", return_value=tmp_script_dir / "backup" / "x.zip"), \
+             patch("stream._download_release_asset"), \
+             patch("stream.load_resources", return_value=sample_resources), \
+             patch("stream._migrate_config"), \
+             patch("stream.load_config", return_value=sample_config), \
+             patch("stream.register_cron_entries") as mock_register:
+            stream.do_update()
+
+        called_config = mock_register.call_args[0][0]
+        assert called_config["cron"]["start"] == "0 8 * * *"
+        assert called_config["cron"]["stop"] == "0 20 * * *"
+
     def test_do_update_skips_cron_when_disabled(self, tmp_script_dir, sample_config, sample_resources):
         """do_update does not call register_cron_entries when cron.enabled is False."""
         (tmp_script_dir / "stream.py").write_text("# old")

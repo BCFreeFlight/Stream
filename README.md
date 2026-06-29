@@ -183,7 +183,7 @@ Clean-slate setup. After a `yes` confirmation prompt, this chains:
 python3 stream.py --update
 ```
 
-Backs up the current `stream.py`, `resources.toml`, and `config.toml` into a versioned zip in the `backup/` directory (e.g., `backup/stream.v0.1.3.bak.zip`), then downloads and replaces `stream.py` and `resources.toml` from the latest GitHub release.
+Backs up the current `stream.py`, `resources.toml`, and `config.toml` into a versioned zip in the `backup/` directory (e.g., `backup/stream.v0.1.3.bak.zip`), then downloads and replaces `stream.py` and `resources.toml` from the latest GitHub release. Cron entries are re-registered automatically, so any changes you made to `cron.start` or `cron.stop` in `config.toml` take effect immediately.
 
 ### Roll back to a previous version
 
