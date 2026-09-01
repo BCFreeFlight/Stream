@@ -102,6 +102,12 @@ except ModuleNotFoundError:
 
 __version__ = "dev"
 
+
+class BroadcastCompleteError(RuntimeError):
+    """Raised when a broadcast is in complete state and must be replaced."""
+    pass
+
+
 GITHUB_REPO = "BCFreeFlight/Stream"
 
 SCOPES = [
@@ -595,6 +601,17 @@ def _api_get_broadcast_lifecycle(youtube, broadcast_id):
     return items[0]["status"]["lifeCycleStatus"] if items else None
 
 
+def _api_get_broadcast_snippet(youtube, broadcast_id):
+    """Return the snippet dict for a broadcast, or None if not found.
+
+    Calls liveBroadcasts.list(part="snippet", id=broadcast_id) and returns
+    the first item's snippet, or None when no items are returned.
+    """
+    resp = youtube.liveBroadcasts().list(part="snippet", id=broadcast_id).execute()
+    items = resp.get("items", [])
+    return items[0]["snippet"] if items else None
+
+
 def _api_list_my_broadcasts(youtube):
     """Call liveBroadcasts.list with mine=True and return the items list.
 
@@ -785,14 +802,10 @@ def update_broadcast_title(youtube, broadcast_id, config, logger):
     """Update the broadcast title with today's interpolated date."""
     title = interpolate_broadcast_title(config)
     try:
-        resp = youtube.liveBroadcasts().list(
-            part="snippet", id=broadcast_id
-        ).execute()
-        items = resp.get("items", [])
-        if not items:
+        snippet = _api_get_broadcast_snippet(youtube, broadcast_id)
+        if not snippet:
             logger.warn(f"Broadcast {broadcast_id} not found")
             return
-        snippet = items[0]["snippet"]
         snippet["title"] = title
         _api_update_broadcast_snippet(youtube, broadcast_id, snippet)
         logger.info(f'Broadcast title updated: "{title}"')
@@ -911,10 +924,10 @@ def _retire_orphaned_broadcast(youtube, broadcast_id, lifecycle, logger):
 
 
 def _create_fresh_broadcast(youtube, config, logger):
-    """Create a new broadcast, bind the existing stream, and update config.
+    """Create a new broadcast and bind the existing stream.
 
     Used when the previous broadcast has been completed (archived).
-    Returns the new broadcast ID.
+    Returns only the new broadcast ID — config persistence is the caller's responsibility.
     """
     new_id = create_broadcast(youtube, config, logger)
 
@@ -930,18 +943,24 @@ def _create_fresh_broadcast(youtube, config, logger):
     embeddable = config["youtube"].get("embeddable", True)
     apply_video_embeddable(youtube, new_id, embeddable, logger)
 
-    config["youtube"]["broadcastId"] = new_id
-    save_config(config)
-    logger.info(f"Config updated with new broadcast ID: {new_id}")
     return new_id
 
 
-def ensure_broadcast_live(youtube, broadcast_id, config, logger, res=None):
+def ensure_broadcast_live(youtube, broadcast_id, logger, res=None):
     """Transition the broadcast to live if it is not already.
 
-    If the broadcast is complete (archived), creates a fresh one automatically.
-    Raises RuntimeError if the broadcast is in an unrecoverable state.
+    Only handles existing non-complete broadcasts (live, ready, created, testing).
+    Raises RuntimeError for complete or unexpected states — the caller is responsible
+    for creating a fresh broadcast when needed.
+
+    Raises:
+        RuntimeError: If the broadcast is complete, in an unexpected state, or missing.
     """
+    if not broadcast_id:
+        errors = res["errors"] if res else {}
+        msg = errors.get("broadcast_missing", "No broadcast ID configured") if errors else "Missing broadcast ID"
+        raise RuntimeError(msg)
+
     status = _api_get_broadcast_lifecycle(youtube, broadcast_id)
     logger.debug(f"Broadcast lifecycle status: {status}")
 
@@ -960,10 +979,9 @@ def ensure_broadcast_live(youtube, broadcast_id, config, logger, res=None):
         return
 
     if status == "complete":
-        logger.info(f"Broadcast {broadcast_id} is complete — creating a new one")
-        new_id = _create_fresh_broadcast(youtube, config, logger)
-        transition_to_live(youtube, new_id, logger)
-        return
+        errors = res["errors"] if res else {}
+        msg = errors.get("broadcast_complete", "Broadcast is complete and must be replaced first") if errors else f"Broadcast {broadcast_id} is complete — create a new one before transitioning to live"
+        raise BroadcastCompleteError(msg)
 
     errors = res["errors"] if res else {}
     msg = errors.get("broadcast_unexpected", "").format(
@@ -1390,41 +1408,19 @@ def _get_nested(config, *keys, default=""):
     return current if current is not None else default
 
 
-def prompt_all_config_values(res, existing=None):
-    """Interactively prompt for configuration values that are not already set.
-
-    Existing values (from a previous install) are silently kept.
-    Empty values trigger a prompt, with a setup guide shown where relevant.
-
-    Args:
-        res: The loaded resources.toml dict.
-        existing: Previously saved config dict, or None.
+def _prompt_google_section(existing_config, res):
+    """Prompt for Google OAuth credentials.
 
     Returns:
-        tuple: (config_dict, client_secret)
+        tuple: (client_id, client_secret)
     """
     prompts = res["install"]["prompts"]
-    defaults = res["install"]["defaults"]
-    validation = res["install"]["validation"]
-    sections = res["install"]["sections"]
-    ex = existing or {}
 
-    rtsp_validator = _make_validator(
-        lambda v: v.startswith("rtsp://"), validation["rtsp_url"]
-    )
-    yes_no_validator = _make_validator(
-        lambda v: v.lower() in ("yes", "no"), validation["yes_no"]
-    )
-    privacy_validator = _make_validator(
-        lambda v: v.lower() in ("public", "unlisted", "private"), validation["privacy"]
-    )
-
-    # ── Google OAuth ──
-    print(sections["google"])
+    print(res["install"]["sections"]["google"])
     load_env()
     client_id = _smart_prompt(
         prompts["clientId"],
-        _get_nested(ex, "google", "clientId"),
+        _get_nested(existing_config, "google", "clientId"),
         guide=res["install"]["google_cloud_guide"],
     )
     existing_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -1432,76 +1428,127 @@ def prompt_all_config_values(res, existing=None):
         prompts["clientSecret"],
         existing_secret,
     )
+    return client_id, client_secret
 
-    # ── RTSP Source ──
-    print(sections["rtsp"])
+
+def _prompt_stream_section(existing_config, res):
+    """Prompt for RTSP source and codec settings.
+
+    Returns:
+        tuple: (rtsp_url, video_codec, audio_codec, mute)
+    """
+    prompts = res["install"]["prompts"]
+    defaults = res["install"]["defaults"]
+    validation = res["install"]["validation"]
+
+    print(res["install"]["sections"]["rtsp"])
+    rtsp_validator = _make_validator(
+        lambda v: v.startswith("rtsp://"), validation["rtsp_url"]
+    )
     rtsp_url = _smart_prompt(
         prompts["rtspUrl"],
-        _get_nested(ex, "stream", "rtspUrl"),
+        _get_nested(existing_config, "stream", "rtspUrl"),
         validator=rtsp_validator,
     )
     rtsp_url = encode_rtsp_credentials(rtsp_url)
     video_codec = _smart_prompt(
         prompts["videoCodec"],
-        _get_nested(ex, "stream", "videoCodec"),
+        _get_nested(existing_config, "stream", "videoCodec"),
         default=defaults["videoCodec"],
     )
     audio_codec = _smart_prompt(
         prompts["audioCodec"],
-        _get_nested(ex, "stream", "audioCodec"),
+        _get_nested(existing_config, "stream", "audioCodec"),
         default=defaults["audioCodec"],
     )
-    existing_mute = _get_nested(ex, "stream", "mute", default=None)
+    existing_mute = _get_nested(existing_config, "stream", "mute", default=None)
     if existing_mute is not None:
         mute = existing_mute
     else:
+        yes_no_validator = _make_validator(
+            lambda v: v.lower() in ("yes", "no"), validation["yes_no"]
+        )
         mute_str = _prompt(
             prompts["mute"], default=defaults["mute"], validator=yes_no_validator
         )
         mute = mute_str.lower() == "yes"
 
-    # ── YouTube Broadcast ──
-    print(sections["youtube_broadcast"])
+    return rtsp_url, video_codec, audio_codec, mute
+
+
+def _prompt_youtube_section(existing_config, res):
+    """Prompt for YouTube broadcast settings.
+
+    Returns:
+        tuple: (title, privacy, enable_dvr, archive_privacy, category_id, broadcast_id)
+    """
+    prompts = res["install"]["prompts"]
+    defaults = res["install"]["defaults"]
+    validation = res["install"]["validation"]
+
+    print(res["install"]["sections"]["youtube_broadcast"])
+    privacy_validator = _make_validator(
+        lambda v: v.lower() in ("public", "unlisted", "private"), validation["privacy"]
+    )
+
     title = _smart_prompt(
         prompts["broadcastTitle"],
-        _get_nested(ex, "youtube", "broadcastTitle"),
+        _get_nested(existing_config, "youtube", "broadcastTitle"),
         default=defaults["broadcastTitle"],
         guide=res["install"]["broadcast_title_guide"],
     )
     privacy = _smart_prompt(
         prompts["privacy"],
-        _get_nested(ex, "youtube", "privacy"),
+        _get_nested(existing_config, "youtube", "privacy"),
         default=defaults["privacy"],
         validator=privacy_validator,
     )
-    existing_dvr = _get_nested(ex, "youtube", "enableDvr", default=None)
+    existing_dvr = _get_nested(existing_config, "youtube", "enableDvr", default=None)
     if existing_dvr is not None:
         enable_dvr = existing_dvr
     else:
+        yes_no_validator = _make_validator(
+            lambda v: v.lower() in ("yes", "no"), validation["yes_no"]
+        )
         dvr_str = _prompt(
             prompts["enableDvr"], default=defaults["enableDvr"], validator=yes_no_validator
         )
         enable_dvr = dvr_str.lower() == "yes"
     archive_privacy = _smart_prompt(
         prompts["archivePrivacy"],
-        _get_nested(ex, "youtube", "archivePrivacy"),
+        _get_nested(existing_config, "youtube", "archivePrivacy"),
         default=defaults["archivePrivacy"],
         validator=privacy_validator,
     )
     category_id = _smart_prompt(
         prompts["categoryId"],
-        _get_nested(ex, "youtube", "categoryId"),
+        _get_nested(existing_config, "youtube", "categoryId"),
         default=defaults["categoryId"],
     )
     broadcast_id = _smart_prompt(
         prompts["broadcastId"],
-        _get_nested(ex, "youtube", "broadcastId"),
+        _get_nested(existing_config, "youtube", "broadcastId"),
         default=defaults["broadcastId"],
     )
 
-    # ── Schedule (cron) ──
-    print(sections["schedule"])
-    existing_cron_enabled = _get_nested(ex, "cron", "enabled", default=None)
+    return title, privacy, enable_dvr, archive_privacy, category_id, broadcast_id
+
+
+def _prompt_cron_section(existing_config, res):
+    """Prompt for cron schedule settings.
+
+    Returns:
+        tuple: (enabled, start, stop, auto_update, update)
+    """
+    prompts = res["install"]["prompts"]
+    defaults = res["install"]["defaults"]
+
+    print(res["install"]["sections"]["schedule"])
+    yes_no_validator = _make_validator(
+        lambda v: v.lower() in ("yes", "no"), res["install"]["validation"]["yes_no"]
+    )
+
+    existing_cron_enabled = _get_nested(existing_config, "cron", "enabled", default=None)
     if existing_cron_enabled is not None:
         cron_enabled = existing_cron_enabled
     else:
@@ -1518,15 +1565,15 @@ def prompt_all_config_values(res, existing=None):
         _show_guide(res["install"]["cron_guide"])
         cron_start = _smart_prompt(
             prompts["cronStart"],
-            _get_nested(ex, "cron", "start"),
+            _get_nested(existing_config, "cron", "start"),
             default=defaults["cronStart"],
         )
         cron_stop = _smart_prompt(
             prompts["cronStop"],
-            _get_nested(ex, "cron", "stop"),
+            _get_nested(existing_config, "cron", "stop"),
             default=defaults["cronStop"],
         )
-        existing_auto_update = _get_nested(ex, "cron", "autoUpdate", default=None)
+        existing_auto_update = _get_nested(existing_config, "cron", "autoUpdate", default=None)
         if existing_auto_update is not None:
             auto_update = existing_auto_update
         else:
@@ -1537,9 +1584,39 @@ def prompt_all_config_values(res, existing=None):
         if auto_update:
             cron_update = _smart_prompt(
                 prompts["cronUpdate"],
-                _get_nested(ex, "cron", "update"),
+                _get_nested(existing_config, "cron", "update"),
                 default=defaults["cronUpdate"],
             )
+
+    return cron_enabled, cron_start, cron_stop, auto_update, cron_update
+
+
+def prompt_all_config_values(res, existing=None):
+    """Interactively prompt for configuration values that are not already set.
+
+    Existing values (from a previous install) are silently kept.
+    Empty values trigger a prompt, with a setup guide shown where relevant.
+
+    Args:
+        res: The loaded resources.toml dict.
+        existing: Previously saved config dict, or None.
+
+    Returns:
+        tuple: (config_dict, client_secret)
+    """
+    # ── Google OAuth ──
+    client_id, client_secret = _prompt_google_section(existing, res)
+
+    # ── RTSP Source ──
+    rtsp_url, video_codec, audio_codec, mute = _prompt_stream_section(existing, res)
+
+    # ── YouTube Broadcast ──
+    title, privacy, enable_dvr, archive_privacy, category_id, broadcast_id = \
+        _prompt_youtube_section(existing, res)
+
+    # ── Schedule (cron) ──
+    cron_enabled, cron_start, cron_stop, auto_update, cron_update = \
+        _prompt_cron_section(existing, res)
 
     config = {
         "google": {"clientId": client_id},
@@ -1554,22 +1631,22 @@ def prompt_all_config_values(res, existing=None):
             "privacy": privacy.lower() if isinstance(privacy, str) else privacy,
             "categoryId": category_id,
             "enableMonitorStream": _get_nested(
-                ex, "youtube", "enableMonitorStream", default=False
+                existing or {}, "youtube", "enableMonitorStream", default=False
             ),
-            "embeddable": _get_nested(ex, "youtube", "embeddable", default=True),
+            "embeddable": _get_nested(existing or {}, "youtube", "embeddable", default=True),
             "enableDvr": enable_dvr,
             "archivePrivacy": archive_privacy.lower() if isinstance(archive_privacy, str) else archive_privacy,
             "broadcastId": broadcast_id,
-            "streamURL": _get_nested(ex, "youtube", "streamURL"),
-            "backupStreamUrl": _get_nested(ex, "youtube", "backupStreamUrl"),
-            "streamKey": _get_nested(ex, "youtube", "streamKey"),
+            "streamURL": _get_nested(existing or {}, "youtube", "streamURL"),
+            "backupStreamUrl": _get_nested(existing or {}, "youtube", "backupStreamUrl"),
+            "streamKey": _get_nested(existing or {}, "youtube", "streamKey"),
         },
-        "pidFile": _get_nested(ex, "pidFile", default="./stream.pid"),
-        "stopSentinel": _get_nested(ex, "stopSentinel", default="./stream.stop"),
-        "logDir": _get_nested(ex, "logDir", default="./logs"),
-        "logRetentionDays": _get_nested(ex, "logRetentionDays", default=15),
-        "retryDelaySecs": _get_nested(ex, "retryDelaySecs", default=5),
-        "terminal": _get_nested(ex, "terminal", default="gnome-terminal"),
+        "pidFile": _get_nested(existing or {}, "pidFile", default="./stream.pid"),
+        "stopSentinel": _get_nested(existing or {}, "stopSentinel", default="./stream.stop"),
+        "logDir": _get_nested(existing or {}, "logDir", default="./logs"),
+        "logRetentionDays": _get_nested(existing or {}, "logRetentionDays", default=15),
+        "retryDelaySecs": _get_nested(existing or {}, "retryDelaySecs", default=5),
+        "terminal": _get_nested(existing or {}, "terminal", default="gnome-terminal"),
         "cron": {
             "enabled": cron_enabled,
             "start": cron_start,
@@ -1664,67 +1741,132 @@ def _get_install_credentials(config, client_secret, res):
     return _run_install_oauth(config, client_secret, res)
 
 
-def _setup_youtube_resources(config, creds, res):
-    """Create YouTube broadcast and stream resources if not already configured.
+def _setup_youtube_resources(youtube, existing_config, logger):
+    """Create YouTube broadcast and stream resources.
 
-    Mutates config in-place with the resulting IDs and URLs.
+    Pure function — takes existing config, returns resource values without
+    mutating the input dict or printing anything.
+
+    Args:
+        youtube: YouTube API service object.
+        existing_config: Existing config dict (read-only).
+        logger: Logger instance for internal logging.
+
+    Returns:
+        dict with keys: broadcastId, streamURL, backupStreamUrl, streamKey.
     """
-    youtube = build_youtube_service(creds)
-    logger = PrintLogger()
-    yt = config["youtube"]
-    msgs = res["install"]["messages"]
+    yt = existing_config["youtube"]
 
     if not yt.get("broadcastId"):
-        yt["broadcastId"] = create_broadcast(youtube, config, logger)
+        broadcast_id = create_broadcast(youtube, existing_config, logger)
+    else:
+        broadcast_id = yt["broadcastId"]
 
-    prompts = res["install"]["prompts"]
+    prompts = None  # Will be set by caller for interactive key lookup
+    stream_id = None
 
     if not yt.get("streamKey"):
+        # Caller is responsible for showing the guide and prompting.
+        # Return None to signal that stream resources need creation.
+        return {
+            "broadcastId": broadcast_id,
+            "streamURL": "",
+            "backupStreamUrl": "",
+            "streamKey": None,  # None signals caller should prompt/create
+        }
+
+    result = find_stream_resource_by_key(youtube, yt["streamKey"], logger)
+    stream_id = result[0] if result else None
+
+    bind_stream_to_broadcast(youtube, broadcast_id, stream_id, logger)
+
+    if yt.get("categoryId"):
+        apply_broadcast_category(youtube, broadcast_id, yt["categoryId"], logger)
+
+    if broadcast_id:
+        apply_video_embeddable(youtube, broadcast_id, yt.get("embeddable", True), logger)
+
+    return {
+        "broadcastId": broadcast_id,
+        "streamURL": yt.get("streamURL", ""),
+        "backupStreamUrl": yt.get("backupStreamUrl", ""),
+        "streamKey": yt["streamKey"],
+    }
+
+
+def _setup_youtube_resources_with_prompt(youtube, existing_config, logger, prompts, res):
+    """Create YouTube resources including interactive stream key lookup.
+
+    This is the full install-time path that includes prompting for a
+    user-provided stream key. Returns (resources_dict, messages) where
+    messages is a list of user-facing strings to print.
+
+    Args:
+        youtube: YouTube API service object.
+        existing_config: Existing config dict (read-only).
+        logger: Logger instance for internal logging.
+        prompts: Resource prompts dict (for stream key label).
+        res: Full resources dict (for guide and messages).
+
+    Returns:
+        tuple: (resources_dict, print_messages) where resources_dict has keys
+               broadcastId, streamURL, backupStreamUrl, streamKey and print_messages
+               is a list of strings to display to the user.
+    """
+    msgs = res["install"]["messages"]
+
+    # First do the pure resource setup
+    resources = _setup_youtube_resources(youtube, existing_config, logger)
+
+    broadcast_id = resources["broadcastId"]
+    print_messages = []
+    stream_id = None
+
+    # If streamKey is None, we need to create/find one
+    if resources["streamKey"] is None:
         _show_guide(res["install"]["stream_key_guide"])
-        user_key = _prompt(prompts["streamKey"], default="")
+        user_key = _prompt(prompts.get("streamKey", "Stream Key"), default="")
         if user_key:
             result = find_stream_resource_by_key(youtube, user_key, logger)
             if result:
                 stream_id, rtmp_url, backup_url = result
-                yt["streamURL"] = rtmp_url
-                yt["backupStreamUrl"] = backup_url
-                yt["streamKey"] = user_key
+                resources["streamURL"] = rtmp_url
+                resources["backupStreamUrl"] = backup_url
+                resources["streamKey"] = user_key
             else:
-                print(msgs["stream_key_not_found"])
-                stream_id, rtmp_url, backup_url, stream_key = create_stream_resource(
-                    youtube, logger
-                )
-                yt["streamURL"] = rtmp_url
-                yt["backupStreamUrl"] = backup_url
-                yt["streamKey"] = stream_key
+                print_messages.append(msgs.get("stream_key_not_found", "Stream key not found — creating new one"))
+                stream_id, rtmp_url, backup_url, stream_key = create_stream_resource(youtube, logger)
+                resources["streamURL"] = rtmp_url
+                resources["backupStreamUrl"] = backup_url
+                resources["streamKey"] = stream_key
         else:
-            stream_id, rtmp_url, backup_url, stream_key = create_stream_resource(
-                youtube, logger
-            )
-            yt["streamURL"] = rtmp_url
-            yt["backupStreamUrl"] = backup_url
-            yt["streamKey"] = stream_key
-    else:
-        result = find_stream_resource_by_key(youtube, yt["streamKey"], logger)
-        stream_id = result[0] if result else None
+            stream_id, rtmp_url, backup_url, stream_key = create_stream_resource(youtube, logger)
+            resources["streamURL"] = rtmp_url
+            resources["backupStreamUrl"] = backup_url
+            resources["streamKey"] = stream_key
 
-    bind_stream_to_broadcast(
-        youtube, yt["broadcastId"], stream_id, logger
-    )
+    # Bind and apply settings with the resolved broadcast_id.
+    # Only run this block when _setup_youtube_resources took the early-return path
+    # (streamKey was None and nothing was bound). When streamKey already existed,
+    # _setup_youtube_resources already handled binding and applying above.
+    if resources["streamKey"] is not None:
+        yt = existing_config["youtube"]
 
-    if yt["broadcastId"] and yt.get("categoryId"):
-        apply_broadcast_category(
-            youtube, yt["broadcastId"], yt["categoryId"], logger
-        )
+        # Only bind/apply if _setup_youtube_resources did not already do it
+        # (i.e., the existing_config had no streamKey, so we created a new one)
+        if not yt.get("streamKey"):
+            bind_stream_to_broadcast(youtube, broadcast_id, stream_id, logger)
 
-    if yt["broadcastId"]:
-        apply_video_embeddable(
-            youtube, yt["broadcastId"], yt.get("embeddable", True), logger
-        )
+            if yt.get("categoryId"):
+                apply_broadcast_category(youtube, broadcast_id, yt["categoryId"], logger)
 
-    bid = yt["broadcastId"]
-    print(msgs["broadcast_id_label"].format(broadcast_id=bid))
-    print(msgs["stream_url_label"].format(broadcast_id=bid))
+            if broadcast_id:
+                apply_video_embeddable(youtube, broadcast_id, yt.get("embeddable", True), logger)
+
+    print_messages.append(msgs["broadcast_id_label"].format(broadcast_id=broadcast_id))
+    print_messages.append(msgs["stream_url_label"].format(broadcast_id=broadcast_id))
+
+    return resources, print_messages
 
 
 def _print_install_summary(config, res):
@@ -1767,7 +1909,24 @@ def do_install():
     creds = _get_install_credentials(config, client_secret, res)
 
     print(res["install"]["sections"]["youtube_setup"])
-    _setup_youtube_resources(config, creds, res)
+    youtube = build_youtube_service(creds)
+    logger = PrintLogger()
+
+    prompts = res["install"]["prompts"]
+    resources, print_messages = _setup_youtube_resources_with_prompt(
+        youtube, config, logger, prompts, res
+    )
+
+    # Apply returned resources to config and persist
+    config["youtube"]["broadcastId"] = resources["broadcastId"]
+    config["youtube"]["streamURL"] = resources["streamURL"]
+    config["youtube"]["backupStreamUrl"] = resources["backupStreamUrl"]
+    if resources.get("streamKey"):
+        config["youtube"]["streamKey"] = resources["streamKey"]
+    save_config(config)
+
+    for msg in print_messages:
+        print(msg)
 
     terminal = detect_terminal()
     config["terminal"] = terminal
@@ -1891,8 +2050,39 @@ def _connect_to_broadcast(config, logger, attempt_number=0):
     return BroadcastContext(youtube, broadcast_id, stream_id, rtmp_url, stream_key)
 
 
+def _wait_and_go_live(youtube, broadcast_id, stream_id, config, logger):
+    """Wait for the YouTube stream to become active and ensure broadcast is live.
+
+    If stream_id is valid, calls wait_for_stream_active (raises RuntimeError on failure).
+    If stream_id is empty/None, sleeps 15 seconds as a fallback.
+    After activation (or sleep), calls ensure_broadcast_live to transition the broadcast.
+
+    Does NOT call update_broadcast_title — that is handled by the caller on first attempt.
+    """
+    if stream_id:
+        if not wait_for_stream_active(youtube, stream_id, logger):
+            raise RuntimeError("Stream did not become active")
+    else:
+        logger.debug("Stream ID unavailable — waiting for ffmpeg to establish connection")
+        time.sleep(15)
+
+    ensure_broadcast_live(youtube, broadcast_id, logger)
+
+
 def _stream_until_exit(config, logger, ctx, res=None, first_attempt=False):
-    """Launch ffmpeg, ensure the broadcast is live, then relay output until exit."""
+    """Launch ffmpeg and manage the subprocess lifecycle.
+
+    Delegates YouTube-side logic (stream activation, broadcast transition) to
+    _wait_and_go_live. On first attempt after that helper returns, calls
+    update_broadcast_title to set the broadcast title with today's date.
+
+    Args:
+        config: Full configuration dict.
+        logger: Logger instance for output.
+        ctx: BroadcastContext with youtube, broadcast_id, stream_id, rtmp_url, stream_key.
+        res: Loaded resources dict (for error messages), or None.
+        first_attempt: If True, update the broadcast title after going live.
+    """
     global _ffmpeg_process
 
     cmd = build_ffmpeg_command(config, ctx.rtmp_url, ctx.stream_key)
@@ -1900,20 +2090,17 @@ def _stream_until_exit(config, logger, ctx, res=None, first_attempt=False):
     _ffmpeg_process = process
     output_thread = relay_ffmpeg_output(process, logger)
 
-    if ctx.stream_id:
-        if not wait_for_stream_active(ctx.youtube, ctx.stream_id, logger):
-            process.terminate()
-            process.wait()
-            output_thread.join(timeout=5)
-            _ffmpeg_process = None
-            if is_stop_requested(config):
-                return
-            raise RuntimeError("Stream did not become active")
-    else:
-        logger.debug("Stream ID unavailable — waiting for ffmpeg to establish connection")
-        time.sleep(15)
-
-    ensure_broadcast_live(ctx.youtube, ctx.broadcast_id, config, logger, res)
+    try:
+        _wait_and_go_live(ctx.youtube, ctx.broadcast_id, ctx.stream_id, config, logger)
+    except RuntimeError:
+        # _wait_and_go_live raises on stream activation failure or complete broadcast.
+        process.terminate()
+        process.wait()
+        output_thread.join(timeout=5)
+        _ffmpeg_process = None
+        if is_stop_requested(config):
+            return
+        raise
 
     if first_attempt:
         live_broadcast_id = config["youtube"]["broadcastId"]
@@ -1954,7 +2141,39 @@ def _run_stream_loop(config, logger, res=None):
                 break
 
             _stream_until_exit(config, logger, ctx, res, first_attempt=(attempt == 0))
+        except BroadcastCompleteError:
+            # A complete broadcast raises BroadcastCompleteError from ensure_broadcast_live.
+            # Catch it here, create a fresh broadcast, and retry the loop.
+            logger.info("Broadcast is complete — creating a fresh one")
+            try:
+                creds = get_valid_credentials(config, logger)
+                youtube = build_youtube_service(creds)
+            except Exception as auth_exc:
+                logger.warn(f"Could not authenticate for broadcast replacement: {auth_exc}")
+                break
+
+            new_id = _create_fresh_broadcast(youtube, config, logger)
+            config["youtube"]["broadcastId"] = new_id
+            save_config(config)
+            logger.info(f"Config updated with new broadcast ID: {new_id}")
+
+            # Clean up ffmpeg before retrying
+            _cleanup_ffmpeg()
+
+            if is_stop_requested(config):
+                break
+            # Use a small backoff before retrying to avoid spinning if the new broadcast
+            # is also immediately rejected (race condition where it's archived externally).
+            _wait_before_retry(config, logger)
+
+            # Continue the loop — attempt stays 0 so title gets updated on retry
+            continue
+
+        except RuntimeError as exc:
+            logger.warn(f"Streaming error: {exc}")
+            _cleanup_ffmpeg()
         except Exception as exc:
+            # Non-RuntimeError exceptions (ffmpeg crashes, connection errors) are logged and retried.
             logger.warn(f"Streaming error: {exc}")
             _cleanup_ffmpeg()
 
@@ -1984,15 +2203,27 @@ def _cleanup_orphaned_broadcasts_safely(config, logger):
         logger.warn(f"Orphaned broadcast cleanup failed: {exc}")
 
 
-def _complete_broadcast_if_active(youtube, broadcast_id, logger):
+def _transition_to_complete_if_active(youtube, broadcast_id, logger):
     """Transition the broadcast to complete if it is in an active state."""
+    return _transition_to_complete_if_active(youtube, broadcast_id, logger)
+
+
+def _transition_to_complete_if_active(youtube, broadcast_id, logger):
+    """Transition the broadcast to complete if it is in an active state.
+
+    Active states are: live, ready, testing, created.
+    Returns the original broadcast status if a transition was performed,
+    or False otherwise — allowing callers to distinguish which state the
+    broadcast was in before transition.
+    """
     if not broadcast_id:
-        return
+        return False
     status = _api_get_broadcast_lifecycle(youtube, broadcast_id)
     if status not in ("live", "ready", "testing", "created"):
-        return
+        return False
     _api_transition_broadcast(youtube, broadcast_id, "complete")
     logger.info(f"Retired active broadcast {broadcast_id} (was {status})")
+    return status
 
 
 def _retire_current_broadcast_safely(config, logger):
@@ -2001,7 +2232,7 @@ def _retire_current_broadcast_safely(config, logger):
         creds = get_valid_credentials(config, logger)
         youtube = build_youtube_service(creds)
         broadcast_id = config["youtube"].get("broadcastId", "")
-        _complete_broadcast_if_active(youtube, broadcast_id, logger)
+        _transition_to_complete_if_active(youtube, broadcast_id, logger)
     except Exception as exc:
         logger.warn(f"Could not retire current broadcast: {exc}")
 
@@ -2085,15 +2316,21 @@ def _complete_broadcast(config, logger):
         status = _api_get_broadcast_lifecycle(youtube, broadcast_id)
         logger.debug(f"Broadcast lifecycle status: {status}")
 
-        if status == "live":
-            _api_transition_broadcast(youtube, broadcast_id, "complete")
-            logger.info(f"Broadcast {broadcast_id} transitioned to complete (archived)")
+        pre_status = _transition_to_complete_if_active(youtube, broadcast_id, logger)
+        if not pre_status:
+            # Transition was skipped — check if it's already complete or in an invalid state.
+            if status == "complete":
+                logger.debug("Broadcast is already complete")
+            else:
+                logger.warn(f"Broadcast in state '{status}' — cannot complete")
+            return
+
+        # Only set archive privacy when the broadcast was actually live.
+        # Transitions from ready/testing/created mean the stream never went live,
+        # and YouTube's transition API may reject privacy updates on non-live broadcasts.
+        if pre_status == "live":
             archive_privacy = config["youtube"].get("archivePrivacy", "private")
             _set_archive_privacy(youtube, broadcast_id, archive_privacy, logger)
-        elif status == "complete":
-            logger.debug("Broadcast is already complete")
-        else:
-            logger.warn(f"Broadcast in state '{status}' — cannot complete")
     except Exception as exc:
         logger.warn(f"Could not complete broadcast: {exc}")
 
