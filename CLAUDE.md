@@ -159,6 +159,7 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 
 | Switch | Behavior |
 |--------|----------|
+| no arguments | launches web UI at localhost:8765 |
 | `--install` | Idempotent setup: loads existing config and only prompts for values that are empty or missing. Installs deps, runs OAuth if needed, creates YouTube resources if not already configured, and registers cron entries without duplicating them. |
 | `--uninstall` | Stops any running stream, archives the broadcast, and removes all cron entries (start/stop/@reboot recover). `config.toml` and `.env` are **preserved** so the user can re-install later without re-entering credentials. |
 | `--reinstall` | Destructive clean-slate setup. Prompts for `yes` confirmation, then chains `--uninstall` → delete `config.toml` + `.env` → `--install`. `logs/` and `backup/` are preserved. |
