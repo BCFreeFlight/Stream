@@ -235,7 +235,7 @@ The stream resource (RTMP URL and stream key) is created **once** during `--inst
 6. Wait for stream to become active (up to `streamActiveTimeoutSecs`; on timeout, the last lines of ffmpeg output are logged at `WARN` and the attempt is retried)
 7. Ensure broadcast is live — check the current lifecycle state:
    - `complete`: create a new broadcast, bind the existing stream, update `broadcastId` in `config.toml`, then transition to `live`
-   - `ready` or `created`: transition `ready` → `testing` → `live`
+   - `ready` or `created`: transition `ready` → `testing` → `live` (the `testing` step is skipped when `enableMonitorStream = false`, because YouTube only allows `testing` with the monitor stream enabled)
    - `testing`: transition directly to `live`
    - `live`: no-op
 
