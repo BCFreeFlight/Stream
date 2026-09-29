@@ -687,11 +687,57 @@ class TestHighLevelOrchestration:
     def test_transition_to_live_calls_testing_then_live(
         self, mock_testing, mock_transition, mock_sleep, mock_logger
     ):
-        """Calls _attempt_testing_transition then transitions to live."""
+        """With the monitor stream enabled, transitions to testing then live."""
         yt = MagicMock()
-        stream.transition_to_live(yt, "bid", mock_logger)
+        order = MagicMock()
+        order.attach_mock(mock_testing, "testing")
+        order.attach_mock(mock_transition, "transition")
+        stream.transition_to_live(yt, "bid", True, mock_logger)
         mock_testing.assert_called_once_with(yt, "bid", mock_logger)
         mock_transition.assert_called_once_with(yt, "bid", "live")
+        assert [c[0] for c in order.mock_calls] == ["testing", "transition"]
+
+    @patch("time.sleep")
+    @patch("stream._api_transition_broadcast")
+    @patch("stream._attempt_testing_transition")
+    def test_transition_to_live_skips_testing_without_monitor_stream(
+        self, mock_testing, mock_transition, mock_sleep, mock_logger
+    ):
+        """With the monitor stream disabled, goes straight to live (no testing call)."""
+        yt = MagicMock()
+        stream.transition_to_live(yt, "bid", False, mock_logger)
+        mock_testing.assert_not_called()
+        mock_transition.assert_called_once_with(yt, "bid", "live")
+
+    @patch("time.sleep")
+    @patch("stream._api_get_broadcast_lifecycle")
+    def test_transition_to_live_without_monitor_never_requests_testing(
+        self, mock_lifecycle, mock_sleep, mock_logger
+    ):
+        """No liveBroadcasts.transition(testing) API request is made at all."""
+        yt = MagicMock()
+        stream.transition_to_live(yt, "bid", False, mock_logger)
+        statuses = [
+            c.kwargs.get("broadcastStatus")
+            for c in yt.liveBroadcasts.return_value.transition.call_args_list
+        ]
+        assert statuses == ["live"]
+        mock_lifecycle.assert_not_called()
+        mock_logger.warn.assert_not_called()
+
+    @patch("time.sleep")
+    @patch("stream._api_get_broadcast_lifecycle", return_value="testing")
+    def test_transition_to_live_with_monitor_requests_testing_then_live(
+        self, mock_lifecycle, mock_sleep, mock_logger
+    ):
+        """With the monitor stream enabled, the API sees testing then live."""
+        yt = MagicMock()
+        stream.transition_to_live(yt, "bid", True, mock_logger)
+        statuses = [
+            c.kwargs.get("broadcastStatus")
+            for c in yt.liveBroadcasts.return_value.transition.call_args_list
+        ]
+        assert statuses == ["testing", "live"]
 
     # -- ensure_broadcast_live -----------------------------------------------
 
@@ -708,8 +754,23 @@ class TestHighLevelOrchestration:
     def test_ensure_broadcast_live_ready(self, mock_lifecycle, mock_trans, mock_logger, sample_config):
         """Calls transition_to_live when status is 'ready'."""
         mock_lifecycle.return_value = "ready"
-        stream.ensure_broadcast_live(MagicMock(), "bid", sample_config, mock_logger)
-        mock_trans.assert_called_once()
+        yt = MagicMock()
+        stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
+        mock_trans.assert_called_once_with(yt, "bid", False, mock_logger)
+
+    @pytest.mark.parametrize("status", ["ready", "created"])
+    @pytest.mark.parametrize("enable_monitor", [True, False])
+    @patch("stream.transition_to_live")
+    @patch("stream._api_get_broadcast_lifecycle")
+    def test_ensure_broadcast_live_passes_monitor_flag(
+        self, mock_lifecycle, mock_trans, enable_monitor, status, mock_logger, sample_config
+    ):
+        """The configured enableMonitorStream flag is passed to transition_to_live."""
+        sample_config["youtube"]["enableMonitorStream"] = enable_monitor
+        mock_lifecycle.return_value = status
+        yt = MagicMock()
+        stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
+        mock_trans.assert_called_once_with(yt, "bid", enable_monitor, mock_logger)
 
     @patch("stream._api_transition_broadcast")
     @patch("stream._api_get_broadcast_lifecycle")
@@ -733,7 +794,20 @@ class TestHighLevelOrchestration:
         yt = MagicMock()
         stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
         mock_create.assert_called_once_with(yt, sample_config, mock_logger)
-        mock_trans.assert_called_once_with(yt, "new-bid", mock_logger)
+        mock_trans.assert_called_once_with(yt, "new-bid", False, mock_logger)
+
+    @patch("stream.transition_to_live")
+    @patch("stream._create_fresh_broadcast", return_value="new-bid")
+    @patch("stream._api_get_broadcast_lifecycle")
+    def test_ensure_broadcast_live_complete_passes_monitor_flag(
+        self, mock_lifecycle, mock_create, mock_trans, mock_logger, sample_config
+    ):
+        """A fresh broadcast honors enableMonitorStream = true."""
+        sample_config["youtube"]["enableMonitorStream"] = True
+        mock_lifecycle.return_value = "complete"
+        yt = MagicMock()
+        stream.ensure_broadcast_live(yt, "bid", sample_config, mock_logger)
+        mock_trans.assert_called_once_with(yt, "new-bid", True, mock_logger)
 
     @patch("stream._api_get_broadcast_lifecycle")
     def test_ensure_broadcast_live_unknown_raises(self, mock_lifecycle, mock_logger, sample_config):
