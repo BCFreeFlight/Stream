@@ -49,6 +49,31 @@ def block_real_oauth():
         yield
 
 
+# ── Module Identity Guard ────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def guard_stream_module_identity(stream):
+    """Fail loudly if a test leaves a different ``stream`` module in sys.modules.
+
+    ``patch("stream.*")`` resolves ``sys.modules['stream']``, while
+    ``tmp_script_dir`` redirects SCRIPT_DIR on the session module. If the two
+    diverge, patches silently miss and the code under test runs against the
+    real ``src/`` directory — writing config.toml, backups, etc. into the
+    repository. Restore the session module and fail the offending test.
+    """
+    import sys
+
+    yield
+    current = sys.modules.get("stream")
+    if current is not stream:
+        sys.modules["stream"] = stream
+        pytest.fail(
+            "sys.modules['stream'] was replaced or removed by this test and not "
+            "restored; later tests would run against the real src/ directory"
+        )
+
+
 # ── Global State Reset ───────────────────────────────────────────────────────
 
 
