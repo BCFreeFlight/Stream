@@ -25,5 +25,6 @@ The retry loop runs indefinitely (no max count) until `--stop` or a signal. Each
 ## Consequences
 
 - Survives transient failures of either ingest endpoint.
+- The alternation counter only advances after an attempt that launched ffmpeg. Failures before launch (DNS, auth, API — e.g. at boot before the network is up) retry the same URL, so the first real launch always uses the primary endpoint.
 - No human intervention required for recovery.
 - The stop sentinel is checked before every retry and during the delay, so stop is always honored ([ADR-0014](0014-pid-and-stop-sentinel.md)).

@@ -200,6 +200,7 @@ class TestPromptAllConfigValues:
         assert config["youtube"]["streamKey"] == ""
         assert secret == "test-secret"
         # Absent from the existing config → schema default, without prompting.
+        assert config["networkWaitSecs"] == stream.CONFIG_DEFAULTS["networkWaitSecs"]
         assert config["streamActiveTimeoutSecs"] == stream.CONFIG_DEFAULTS["streamActiveTimeoutSecs"]
 
     def test_existing_stream_active_timeout_preserved(self, sample_resources):
@@ -223,6 +224,28 @@ class TestPromptAllConfigValues:
             config, _ = stream.prompt_all_config_values(sample_resources, existing=existing)
 
         assert config["streamActiveTimeoutSecs"] == 300
+
+    def test_existing_network_wait_preserved(self, sample_resources):
+        """A user-set networkWaitSecs survives a re-run of --install unprompted."""
+        existing = {
+            "google": {"clientId": "cid"},
+            "stream": {"rtspUrl": "rtsp://cam/live", "videoCodec": "copy",
+                       "audioCodec": "copy", "mute": False},
+            "youtube": {"broadcastTitle": "T: {date}", "privacy": "public",
+                        "enableDvr": False, "archivePrivacy": "private",
+                        "categoryId": "22", "broadcastId": "b", "streamURL": "",
+                        "backupStreamUrl": "", "streamKey": ""},
+            "cron": {"enabled": True, "start": "30 6 * * *", "stop": "25 18 * * *",
+                     "autoUpdate": False, "update": "0 0 * * *"},
+            "networkWaitSecs": 30,
+        }
+        inputs = iter(["test-secret"])
+        with patch("builtins.input", lambda *a, **kw: next(inputs)), \
+             patch("stream.load_env"), \
+             patch.dict("os.environ", {}, clear=False):
+            config, _ = stream.prompt_all_config_values(sample_resources, existing=existing)
+
+        assert config["networkWaitSecs"] == 30
 
     def test_cron_enabled_skipped_when_existing(self, sample_resources):
         """cronSetup is not prompted when cron.enabled already exists in the config."""

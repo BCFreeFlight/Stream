@@ -53,7 +53,7 @@ Writes the stop sentinel, sends `SIGTERM` to the running process, waits for exit
 
 ## `--recover`
 
-If a stream is already running, no-op. Else, if the current time is inside the `cron.start`/`cron.stop` window, delegates to `--start`; otherwise exits cleanly. Registered as an `@reboot` cron entry. See [scheduling](scheduling.md#--recover) and [ADR-0016](adr/0016-reboot-crash-recovery.md).
+If a stream is already running, no-op. Else, if the current time is inside the `cron.start`/`cron.stop` window, waits up to `networkWaitSecs` for the network (DNS) and then delegates to `--start`; otherwise exits cleanly. Registered as an `@reboot` cron entry. See [scheduling](scheduling.md#--recover) and [ADR-0016](adr/0016-reboot-crash-recovery.md).
 
 ## `--update`
 

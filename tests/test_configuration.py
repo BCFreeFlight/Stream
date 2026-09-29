@@ -371,6 +371,30 @@ class TestMigrateConfig:
         assert result["youtube"]["backupStreamUrl"] == stream.CONFIG_DEFAULTS["youtube"]["backupStreamUrl"]
         assert "migrated" in capsys.readouterr().out
 
+    def test_adds_network_wait_to_released_config(self, tmp_script_dir, sample_config):
+        """A config.toml from a release without networkWaitSecs gains the default."""
+        del sample_config["networkWaitSecs"]
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        result = stream.load_config()
+        assert result["networkWaitSecs"] == 120
+        assert "# Max seconds --recover waits at boot for the network" in config_path.read_text()
+
+    def test_keeps_user_network_wait(self, tmp_script_dir, sample_config):
+        """A user-set networkWaitSecs is never overwritten by migration."""
+        sample_config["networkWaitSecs"] = 30
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        assert stream.load_config()["networkWaitSecs"] == 30
+
     def test_adds_stream_active_timeout_to_released_config(self, tmp_script_dir, sample_config):
         """A config.toml from a release without streamActiveTimeoutSecs gains the default."""
         del sample_config["streamActiveTimeoutSecs"]
@@ -394,6 +418,20 @@ class TestMigrateConfig:
         stream._migrate_config()
 
         assert stream.load_config()["streamActiveTimeoutSecs"] == 300
+
+    def test_released_config_missing_both_new_keys(self, tmp_script_dir, sample_config):
+        """A v0.1.19-era config gains networkWaitSecs and streamActiveTimeoutSecs together."""
+        del sample_config["networkWaitSecs"]
+        del sample_config["streamActiveTimeoutSecs"]
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        result = stream.load_config()
+        assert result["networkWaitSecs"] == 120
+        assert result["streamActiveTimeoutSecs"] == 120
 
     def test_preserves_user_values_when_migrating(self, tmp_script_dir, sample_config):
         """Existing user values are never overwritten during migration."""
@@ -474,6 +512,10 @@ class TestSetConfigProperty:
         stream._set_config_property(sample_config, "cron.autoUpdate", "true")
         assert sample_config["cron"]["autoUpdate"] is True
 
+    def test_sets_network_wait(self, sample_config):
+        """networkWaitSecs is settable via --set-property and coerced to int."""
+        stream._set_config_property(sample_config, "networkWaitSecs", "60")
+        assert sample_config["networkWaitSecs"] == 60
     def test_sets_stream_active_timeout(self, sample_config):
         """streamActiveTimeoutSecs is settable via --set-property and coerced to int."""
         stream._set_config_property(sample_config, "streamActiveTimeoutSecs", "90")
