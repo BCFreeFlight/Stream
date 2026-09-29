@@ -191,6 +191,22 @@ for _ in range(120):
 
 ---
 
+## `→ testing` is invalid when the monitor stream is disabled
+
+**Symptom:** `liveBroadcasts.transition(broadcastStatus="testing")` returns
+`403 invalidTransition` on every start, even though the stream is active and
+the broadcast is `ready`. The following `→ live` transition succeeds.
+
+**Root cause:** A broadcast can only enter `testing` when
+`contentDetails.monitorStream.enableMonitorStream` is `true`. With the monitor
+stream disabled (this project's default), `testing` is never a valid state.
+
+**Workaround:** `transition_to_live` only attempts the `testing` step when
+`youtube.enableMonitorStream` is `true`; otherwise it transitions `ready` →
+`live` directly.
+
+---
+
 ## Snippet update must be read–modify–write
 
 **Symptom:** `liveBroadcasts.update` with `part="snippet"` returns `400` or

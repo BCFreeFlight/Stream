@@ -859,9 +859,15 @@ def _poll_until_lifecycle_status(youtube, broadcast_id, target, logger):
         time.sleep(3)
 
 
-def transition_to_live(youtube, broadcast_id, logger):
-    """Move the broadcast from ready → testing → live."""
-    _attempt_testing_transition(youtube, broadcast_id, logger)
+def transition_to_live(youtube, broadcast_id, enable_monitor, logger):
+    """Move the broadcast from ready → testing → live.
+
+    YouTube only allows a transition to 'testing' when the broadcast's monitor
+    stream is enabled, so the testing step is skipped when enable_monitor is
+    False and the broadcast goes straight to live.
+    """
+    if enable_monitor:
+        _attempt_testing_transition(youtube, broadcast_id, logger)
     logger.info(f"Transitioning broadcast {broadcast_id} → live")
     _api_transition_broadcast(youtube, broadcast_id, "live")
     logger.info("Broadcast is LIVE")
@@ -949,8 +955,10 @@ def ensure_broadcast_live(youtube, broadcast_id, config, logger, res=None):
         logger.info("Broadcast is already live")
         return
 
+    enable_monitor = config["youtube"]["enableMonitorStream"]
+
     if status in ("ready", "created"):
-        transition_to_live(youtube, broadcast_id, logger)
+        transition_to_live(youtube, broadcast_id, enable_monitor, logger)
         return
 
     if status == "testing":
@@ -962,7 +970,7 @@ def ensure_broadcast_live(youtube, broadcast_id, config, logger, res=None):
     if status == "complete":
         logger.info(f"Broadcast {broadcast_id} is complete — creating a new one")
         new_id = _create_fresh_broadcast(youtube, config, logger)
-        transition_to_live(youtube, new_id, logger)
+        transition_to_live(youtube, new_id, enable_monitor, logger)
         return
 
     errors = res["errors"] if res else {}

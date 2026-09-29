@@ -29,8 +29,8 @@ YouTube broadcasts move through: `created` → `ready` → `testing` → `live` 
 
 | Transition | Allowed from |
 |-----------|--------------|
-| → `testing` | `ready` |
-| → `live` | `testing` (or `ready` via testing) |
+| → `testing` | `ready` (only when `enableMonitorStream = true`) |
+| → `live` | `testing`, or `ready` (directly when `enableMonitorStream = false`) |
 | → `complete` | `live`, `testing` |
 | delete | `created`, `ready` (cannot be completed) |
 
@@ -53,7 +53,7 @@ flowchart TD
     C --> D[4. wait for stream → active]
     D --> E{5. ensure broadcast live}
     E -->|complete| F[create fresh broadcast, bind stream,<br/>update config → live]
-    E -->|ready / created| G[testing → live]
+    E -->|ready / created| G["testing → live<br/>(testing skipped when enableMonitorStream = false)"]
     E -->|testing| H[→ live]
     E -->|live| I[no-op]
     F --> J["6. update broadcast title with today's date<br/>(AFTER step 5)"]
