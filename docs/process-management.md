@@ -27,7 +27,7 @@ A presence-only flag file that tells the retry loop to stop.
 
 - Created by `--stop` and by the signal handler.
 - Checked before every retry attempt and during the retry delay. If present, the loop exits cleanly instead of reconnecting.
-- Cleared at the start of `--start` and removed on shutdown.
+- Cleared at the start of `--start` — *after* any previous `--start` process has been killed, because that process's signal handler writes the sentinel as it exits — and removed on shutdown.
 
 The sentinel decouples "stop streaming" from "kill process": even mid-retry-delay, the loop notices the sentinel and exits without another ffmpeg launch.
 
