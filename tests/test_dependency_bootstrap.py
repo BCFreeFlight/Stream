@@ -9,6 +9,13 @@ import pytest
 import stream
 
 
+def _drop_stream_module():
+    """Remove ``stream`` (and any submodules) from ``sys.modules`` for a fresh import."""
+    for mod in list(sys.modules.keys()):
+        if mod == "stream" or mod.startswith("stream."):
+            del sys.modules[mod]
+
+
 def _restore_stream_module(original):
     """Restore ``sys.modules['stream']`` to the object captured before a fresh import.
 
@@ -23,6 +30,54 @@ def _restore_stream_module(original):
         sys.modules["stream"] = original
     else:
         sys.modules.pop("stream", None)
+
+
+class TestStreamModuleRestore:
+    """The helpers that keep ``sys.modules['stream']`` pointing at the session module."""
+
+    def test_restore_after_drop(self):
+        original = sys.modules["stream"]
+        try:
+            _drop_stream_module()
+            assert "stream" not in sys.modules
+        finally:
+            _restore_stream_module(original)
+        assert sys.modules["stream"] is original
+
+    def test_restore_replaces_fresh_import(self):
+        """A re-imported module object is replaced by the original."""
+        original = sys.modules["stream"]
+        try:
+            sys.modules["stream"] = object()
+        finally:
+            _restore_stream_module(original)
+        assert sys.modules["stream"] is original
+
+    def test_restore_with_no_original_removes_entry(self):
+        original = sys.modules["stream"]
+        try:
+            _restore_stream_module(None)
+            assert "stream" not in sys.modules
+        finally:
+            sys.modules["stream"] = original
+
+    def test_module_restored_when_fresh_import_fails(self):
+        """Regression: a failure mid-test must still restore the session module.
+
+        Previously the tomli fallback test imported tomli after removing
+        ``stream`` from sys.modules but before its try/finally. Without tomli
+        installed, ``stream`` was never restored, later ``patch("stream.*")``
+        calls imported a fresh module whose SCRIPT_DIR was the real ``src/``
+        directory, and tests wrote config.toml and backup/ into it.
+        """
+        original = sys.modules["stream"]
+        with pytest.raises(RuntimeError):
+            try:
+                _drop_stream_module()
+                raise RuntimeError("simulated failure during fresh import")
+            finally:
+                _restore_stream_module(original)
+        assert sys.modules["stream"] is original
 
 
 class TestPipInstall:
@@ -150,13 +205,10 @@ class TestPipInstall:
 
     def test_tomli_fallback_when_tomllib_unavailable(self):
         """stream.tomllib resolves to tomli when tomllib is not available (Python < 3.11)."""
+        # Resolve tomli BEFORE touching sys.modules: if it is not installed the
+        # test is skipped with the session's ``stream`` module still in place.
+        _tomli_module = pytest.importorskip("tomli")
         original_stream = sys.modules.get("stream")
-        # Remove stream and tomllib from sys.modules so we get a fresh import
-        for mod in list(sys.modules.keys()):
-            if mod == "stream" or mod.startswith("stream."):
-                del sys.modules[mod]
-
-        import tomli as _tomli_module  # keep a reference before patching
         real_import = __import__
 
         def fake_import(name, *args, **kwargs):
@@ -167,6 +219,9 @@ class TestPipInstall:
             return real_import(name, *args, **kwargs)
 
         try:
+            # Remove stream from sys.modules so we get a fresh import. This is
+            # inside the try so the finally always restores the original module.
+            _drop_stream_module()
             with patch("builtins.__import__", side_effect=fake_import):
                 # Also remove tomllib from sys.modules so the try block actually fails
                 if "tomllib" in sys.modules:
@@ -185,10 +240,6 @@ class TestPipInstall:
     def test_module_not_found_when_neither_available(self):
         """ModuleNotFoundError propagates when both tomllib and tomli are unavailable."""
         original_stream = sys.modules.get("stream")
-        for mod in list(sys.modules.keys()):
-            if mod == "stream" or mod.startswith("stream."):
-                del sys.modules[mod]
-
         real_import = __import__
 
         def fake_import_both_missing(name, *args, **kwargs):
@@ -199,6 +250,7 @@ class TestPipInstall:
             return real_import(name, *args, **kwargs)
 
         try:
+            _drop_stream_module()
             with patch("builtins.__import__", side_effect=fake_import_both_missing):
                 if "tomllib" in sys.modules:
                     del sys.modules["tomllib"]
