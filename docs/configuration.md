@@ -32,7 +32,8 @@ Every key is **read and acted on** by the script — there are no dead fields. E
 | `logDir` | string | `./logs` | Log directory |
 | `logRetentionDays` | integer | `15` | Delete logs older than this many days (pruned on `--start`) |
 | `logLevel` | string | `info` | Persistent verbosity: `debug`, `info`, `warning`, `error` |
-| `retryDelaySecs` | integer | `5` | Seconds between retry attempts |
+| `retryDelaySecs` | integer | `5` | Seconds between retry attempts (also the interval between `--recover` network checks) |
+| `networkWaitSecs` | integer | `120` | Max seconds `--recover` waits at boot for the primary RTMP ingest host (from `youtube.streamURL`) to resolve before delegating to `--start`; if it expires, `--start` runs anyway |
 | `terminal` | string | *(auto-detected)* | Terminal emulator for the start cron job |
 
 ### `[google]`
@@ -63,7 +64,7 @@ Every key is **read and acted on** by the script — there are no dead fields. E
 | `archivePrivacy` | string | `private` | Privacy applied to the archived VOD after `--stop` |
 | `broadcastId` | string | *(auto)* | Persistent broadcast ID; created by `--install`, rotated by `--start` |
 | `streamURL` | string | *(auto)* | Primary RTMP ingest URL |
-| `backupStreamUrl` | string | *(auto)* | Backup RTMP ingest URL (used on odd retry attempts) |
+| `backupStreamUrl` | string | *(auto)* | Backup RTMP ingest URL (used on odd retry attempts that launch ffmpeg) |
 | `streamKey` | string | *(auto)* | RTMP stream key; the stream ID is resolved from this at runtime, never persisted |
 
 ### `[cron]`

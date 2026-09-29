@@ -56,13 +56,15 @@ flowchart TD
     E -->|ready / created| G["testing → live<br/>(testing skipped when enableMonitorStream = false)"]
     E -->|testing| H[→ live]
     E -->|live| I[no-op]
-    F --> J["6. update broadcast title with today's date<br/>(AFTER step 5)"]
+    F --> J["6. update broadcast title with today's date<br/>(AFTER step 5; once per session, first time live)"]
     G --> J
     H --> J
     I --> J
 ```
 
 Title update happens **after** `ensure_broadcast_live` so it stamps the *new* broadcast, never yesterday's archived one. Doing it earlier corrupted the prior day's VOD title with tomorrow's date. See [ADR-0019](adr/0019-title-update-after-ensure-live.md).
+
+The update runs once per `--start` session, the first time the broadcast is confirmed live — not tied to the first retry attempt. If earlier attempts fail (e.g. no network at boot, or the stream never becomes active), the title is stamped on the attempt that actually goes live; if no attempt goes live, the title is never touched.
 
 Orphan cleanup is client-side: the Data API rejects `mine=True` combined with a `broadcastStatus` filter, so the script lists all broadcasts and filters by `lifeCycleStatus` itself. Orphans in `created`/`ready` are deleted (they cannot transition to `complete`); `live`/`testing` are completed (PR #19).
 

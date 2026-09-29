@@ -73,9 +73,11 @@ _ensure_dependencies()
 import argparse
 import datetime
 import json
+import math
 import os
 import signal
 import shutil
+import socket
 import threading
 import time
 from collections import namedtuple
@@ -141,6 +143,7 @@ CONFIG_COMMENTS = {
     "logRetentionDays": "# Delete log files older than this many days",
     "logLevel": '# Log verbosity: "debug", "info", "warning", or "error"',
     "retryDelaySecs": "# Seconds to wait between retry attempts when ffmpeg exits",
+    "networkWaitSecs": "# Max seconds --recover waits at boot for the network (DNS) before starting the stream",
     "terminal": "# Terminal emulator used by the start cron job (auto-detected)",
     "[google]": "# Google OAuth 2.0 credentials — get these from the Cloud Console",
     "[stream]": "# RTSP camera source and ffmpeg codec settings",
@@ -169,6 +172,7 @@ CONFIG_DEFAULTS = {
     "logRetentionDays": 15,
     "logLevel": "info",
     "retryDelaySecs": 5,
+    "networkWaitSecs": 120,
     "terminal": "",
     "google": {
         "clientId": "",
@@ -1577,6 +1581,9 @@ def prompt_all_config_values(res, existing=None):
         "logDir": _get_nested(ex, "logDir", default="./logs"),
         "logRetentionDays": _get_nested(ex, "logRetentionDays", default=15),
         "retryDelaySecs": _get_nested(ex, "retryDelaySecs", default=5),
+        "networkWaitSecs": _get_nested(
+            ex, "networkWaitSecs", default=CONFIG_DEFAULTS["networkWaitSecs"]
+        ),
         "terminal": _get_nested(ex, "terminal", default="gnome-terminal"),
         "cron": {
             "enabled": cron_enabled,
@@ -1857,9 +1864,14 @@ def do_reinstall():
 
 
 def _prepare_stream_process(config, logger):
-    """Clean up previous state, kill any running process, write PID, prune old logs."""
-    cleanup_stop_sentinel(config)
+    """Kill any running process, clear the stop sentinel, write PID, prune old logs.
+
+    The sentinel is cleared *after* the old process is killed: its SIGTERM
+    handler writes the sentinel on the way out, which would otherwise make this
+    new process stop as soon as it reaches the retry loop.
+    """
     kill_existing_process(config, logger)
+    cleanup_stop_sentinel(config)
     write_pid_file(config)
     logger.cleanup_old_logs()
 
@@ -1899,8 +1911,13 @@ def _connect_to_broadcast(config, logger, attempt_number=0):
     return BroadcastContext(youtube, broadcast_id, stream_id, rtmp_url, stream_key)
 
 
-def _stream_until_exit(config, logger, ctx, res=None, first_attempt=False):
-    """Launch ffmpeg, ensure the broadcast is live, then relay output until exit."""
+def _stream_until_exit(config, logger, ctx, res=None, on_live=None):
+    """Launch ffmpeg, ensure the broadcast is live, then relay output until exit.
+
+    on_live(ctx), if given, is called once the broadcast is confirmed live and
+    before blocking on ffmpeg — it is never called when the stream fails to
+    become active or the broadcast cannot be taken live.
+    """
     global _ffmpeg_process
 
     cmd = build_ffmpeg_command(config, ctx.rtmp_url, ctx.stream_key)
@@ -1923,9 +1940,8 @@ def _stream_until_exit(config, logger, ctx, res=None, first_attempt=False):
 
     ensure_broadcast_live(ctx.youtube, ctx.broadcast_id, config, logger, res)
 
-    if first_attempt:
-        live_broadcast_id = config["youtube"]["broadcastId"]
-        update_broadcast_title(ctx.youtube, live_broadcast_id, config, logger)
+    if on_live:
+        on_live(ctx)
 
     process.wait()
     output_thread.join(timeout=5)
@@ -1950,18 +1966,48 @@ def _wait_before_retry(config, logger):
     return not is_stop_requested(config)
 
 
+def _make_title_updater(config, logger):
+    """Return an on_live callback that stamps today's title once per session.
+
+    The title is updated the first time the broadcast is actually live —
+    whichever retry attempt that is — and never again on later reconnects.
+    The broadcast ID is read from config at call time because
+    ensure_broadcast_live may have just created a fresh broadcast.
+    """
+    state = {"done": False}
+
+    def _update_title_once(ctx):
+        if state["done"]:
+            return
+        state["done"] = True
+        live_broadcast_id = config["youtube"]["broadcastId"]
+        update_broadcast_title(ctx.youtube, live_broadcast_id, config, logger)
+
+    return _update_title_once
+
+
 def _run_stream_loop(config, logger, res=None):
-    """Retry loop: connect to broadcast, stream until exit, retry on failure."""
-    attempt = 0
+    """Retry loop: connect to broadcast, stream until exit, retry on failure.
+
+    ``rtmp_attempt`` selects the primary/backup RTMP URL and only advances once
+    a pass has got as far as launching ffmpeg — a failure before that (DNS,
+    auth, API) says nothing about the ingest endpoint, so the next pass
+    retries the same URL. The broadcast title is stamped the first time the
+    broadcast is actually live, on whichever pass that happens.
+    """
+    rtmp_attempt = 0
+    update_title_once = _make_title_updater(config, logger)
 
     while True:
+        connected = False
         try:
-            ctx = _connect_to_broadcast(config, logger, attempt)
+            ctx = _connect_to_broadcast(config, logger, rtmp_attempt)
+            connected = True
 
             if is_stop_requested(config):
                 break
 
-            _stream_until_exit(config, logger, ctx, res, first_attempt=(attempt == 0))
+            _stream_until_exit(config, logger, ctx, res, on_live=update_title_once)
         except Exception as exc:
             logger.warn(f"Streaming error: {exc}")
             _cleanup_ffmpeg()
@@ -1971,7 +2017,8 @@ def _run_stream_loop(config, logger, res=None):
         if not _wait_before_retry(config, logger):
             break
 
-        attempt += 1
+        if connected:
+            rtmp_attempt += 1
 
 
 def _perform_shutdown(config, logger):
@@ -2145,6 +2192,51 @@ def is_in_stream_window(config, now=None):
     return last_start > last_stop
 
 
+def _network_probe_host(config):
+    """Return the hostname of the primary RTMP ingest URL, or None if unavailable."""
+    return urlsplit(config["youtube"].get("streamURL", "")).hostname
+
+
+def _host_resolves(host):
+    """Return True if DNS can resolve host."""
+    try:
+        socket.getaddrinfo(host, None)
+        return True
+    except OSError:
+        return False
+
+
+def wait_for_network(config, logger):
+    """Block until the RTMP ingest host resolves, up to networkWaitSecs.
+
+    At boot, the @reboot cron entry can fire before networking/DNS is up, which
+    makes every YouTube call in --start fail. Checks every retryDelaySecs.
+    Returns True once the host resolves, False if the wait expired (the caller
+    carries on regardless — the retry loop still applies).
+    """
+    host = _network_probe_host(config)
+    if not host:
+        logger.debug("No RTMP ingest host configured — skipping network wait")
+        return True
+
+    wait_secs = config["networkWaitSecs"]
+    interval = max(1, config["retryDelaySecs"])
+    checks = max(1, math.ceil(wait_secs / interval))
+
+    for check in range(checks):
+        if _host_resolves(host):
+            if check:
+                logger.info(f"Network is up ({host} resolves)")
+            return True
+        if check == 0:
+            logger.info(f"Waiting up to {wait_secs}s for the network ({host} does not resolve yet)")
+        if check < checks - 1:
+            time.sleep(interval)
+
+    logger.warn(f"Network still unavailable after {wait_secs}s — starting stream anyway")
+    return False
+
+
 def _stream_process_already_running(config):
     """Return True if a live stream process is already recorded in the PID file."""
     pid = read_pid_file(config)
@@ -2157,7 +2249,9 @@ def do_recover(level_override=None):
     Intended to be run at boot (via @reboot cron) so that a power loss or
     reboot during the streaming window automatically resumes the stream.
     If outside the window, or if a stream is already running, exits cleanly.
+    Inside the window, waits for the network before delegating to --start.
     """
+    _migrate_config()
     config = load_config()
     load_env()
     logger = create_logger(config, level_override)
@@ -2174,6 +2268,7 @@ def do_recover(level_override=None):
         logger.close()
         return
 
+    wait_for_network(config, logger)
     logger.info("Inside stream window — starting stream")
     logger.close()
     do_start(level_override)

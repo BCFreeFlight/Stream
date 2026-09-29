@@ -53,7 +53,7 @@ Camera passwords often contain URI-reserved characters (`$ @ / # ? :`) that brea
 
 ```mermaid
 flowchart TD
-    A[attempt = 0] --> B[connect<br/>alternate RTMP by attempt parity]
+    A[attempt = 0, rtmp_attempt = 0] --> B[connect<br/>alternate RTMP by rtmp_attempt parity]
     B --> C{stop requested?}
     C -->|yes| Z([exit])
     C -->|no| D[stream until ffmpeg exits]
@@ -63,12 +63,12 @@ flowchart TD
     F -->|no| G[wait retryDelaySecs]
     G --> H{stop requested<br/>during wait?}
     H -->|yes| Z
-    H -->|no| I[attempt += 1]
+    H -->|no| I["attempt += 1<br/>rtmp_attempt += 1 only if connect succeeded"]
     I --> B
 ```
 
 - **No max retry count.** Runs until `--stop` or a signal.
-- **RTMP alternation:** even attempts use `streamURL`, odd attempts use `backupStreamUrl` (if configured). See `select_rtmp_url`.
+- **RTMP alternation:** even RTMP attempts use `streamURL`, odd ones use `backupStreamUrl` (if configured). See `select_rtmp_url`. The RTMP attempt counter only advances after a pass that got as far as launching ffmpeg; a failure before that (DNS, auth, YouTube API) says nothing about the ingest endpoint, so the next pass retries the same URL.
 - **Stop checks** happen before every retry and during the delay, via the [stop sentinel](process-management.md#stop-sentinel).
 - On retry the script reconnects to the **same** broadcast; it re-authenticates if needed.
 

@@ -50,11 +50,14 @@ flowchart TD
     A([--recover]) --> B{already running?}
     B -->|yes| C[no-op]
     B -->|no| D{inside window?}
-    D -->|yes| E[delegate to --start]
+    D -->|yes| W["wait for network<br/>(RTMP host resolves, up to networkWaitSecs)"]
+    W --> E[delegate to --start]
     D -->|no| F[exit cleanly]
 ```
 
 The window check (`is_in_stream_window`) compares the most recent fire times of `cron.start` vs `cron.stop` using `croniter`: if start fired more recently than stop, we are inside the window. This reuses real cron semantics (including day/month ranges) instead of reimplementing them, and adds a 1-second epsilon so the exact start second counts as inside. See [ADR-0016](adr/0016-reboot-crash-recovery.md).
+
+Because `@reboot` can fire before networking is up, `--recover` first waits for the network: it resolves the host of `youtube.streamURL` every `retryDelaySecs`, for up to `networkWaitSecs` (default 120). Once it resolves — or the wait expires, with a warning — it delegates to `--start`, whose retry loop still covers anything that fails after that. `--recover` also runs `_migrate_config()` itself so `networkWaitSecs` is present on installs upgraded from an older release.
 
 ## Auto-update cron
 

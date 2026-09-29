@@ -99,6 +99,7 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `logDir` | string | `./logs` | Log directory |
 | `logRetentionDays` | integer | `15` | Days to keep log files |
 | `retryDelaySecs` | integer | `5` | Seconds between retries |
+| `networkWaitSecs` | integer | `120` | Max seconds `--recover` waits at boot for the network (DNS) before starting the stream |
 | `terminal` | string | *(auto-detected)* | Terminal emulator for cron |
 | `cron.enabled` | boolean | `true` | If `false`, cron jobs are not registered during `--install` |
 | `cron.start` | string | `30 6 1-31 4-10 *` | Cron expression for daily start |
@@ -143,7 +144,7 @@ Stops the ffmpeg process gracefully and transitions the broadcast to `complete`,
 python3 stream.py --recover
 ```
 
-Checks whether the current time is inside the daily `cron.start`/`cron.stop` window. If it is — and no stream is already running — it delegates to `--start` to resume streaming. If the current time is outside the window (or a stream is already active) it exits cleanly.
+Checks whether the current time is inside the daily `cron.start`/`cron.stop` window. If it is — and no stream is already running — it waits up to `networkWaitSecs` for the network to come up (the RTMP ingest host must resolve), then delegates to `--start` to resume streaming. If the current time is outside the window (or a stream is already active) it exits cleanly.
 
 `--install` registers this as an `@reboot` cron entry, so if the machine loses power and reboots during the streaming window, the stream automatically resumes.
 
