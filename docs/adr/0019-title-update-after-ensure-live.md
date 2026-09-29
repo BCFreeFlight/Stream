@@ -27,3 +27,7 @@ Move `update_broadcast_title` to run **after** `ensure_broadcast_live`, reading 
 - Yesterday's archive is never touched.
 - The current broadcast gets the correct date, whether newly created or reused.
 - Reinforces the ordering: state-changing transitions before metadata updates.
+
+## Amendment: first live pass, not first attempt
+
+The update was originally gated on the retry loop's first attempt. After a reboot on 2026-09-23 the first attempt failed before ffmpeg launched (no DNS yet), so the pass that actually went live was a retry and the title was never stamped. `_stream_until_exit` now takes an `on_live` callback, invoked only after `ensure_broadcast_live` succeeds; the retry loop passes a one-shot updater (`_make_title_updater`) so the title is stamped exactly once per `--start` session, on the first pass where the broadcast is actually live.

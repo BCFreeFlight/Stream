@@ -432,11 +432,11 @@ class TestStreamUntilExitTitleUpdate:
     @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
     @patch("stream.start_ffmpeg_process")
     @patch("stream.build_ffmpeg_command", return_value=[])
-    def test_title_updated_after_ensure_live_on_first_attempt(
+    def test_title_updated_after_ensure_live(
         self, mock_cmd, mock_start, mock_relay, mock_wait,
         mock_ensure, mock_title, sample_config, mock_logger
     ):
-        """On first_attempt=True, title is updated using config broadcastId after ensure_broadcast_live."""
+        """The title updater runs with the config broadcastId once the broadcast is live."""
         mock_process = MagicMock()
         mock_process.wait.return_value = 0
         mock_process.returncode = 0
@@ -445,7 +445,8 @@ class TestStreamUntilExitTitleUpdate:
         sample_config["youtube"]["broadcastId"] = "bcast-new"
         ctx = self._make_ctx("bcast-old")
 
-        stream._stream_until_exit(sample_config, mock_logger, ctx, first_attempt=True)
+        on_live = stream._make_title_updater(sample_config, mock_logger)
+        stream._stream_until_exit(sample_config, mock_logger, ctx, on_live=on_live)
 
         mock_title.assert_called_once_with(ctx.youtube, "bcast-new", sample_config, mock_logger)
 
@@ -455,11 +456,11 @@ class TestStreamUntilExitTitleUpdate:
     @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
     @patch("stream.start_ffmpeg_process")
     @patch("stream.build_ffmpeg_command", return_value=[])
-    def test_title_not_updated_on_retry(
+    def test_title_not_updated_on_later_live_pass(
         self, mock_cmd, mock_start, mock_relay, mock_wait,
         mock_ensure, mock_title, sample_config, mock_logger
     ):
-        """On first_attempt=False (retry), update_broadcast_title is never called."""
+        """Once the title has been stamped, later live passes do not update it again."""
         mock_process = MagicMock()
         mock_process.wait.return_value = 0
         mock_process.returncode = 0
@@ -467,9 +468,11 @@ class TestStreamUntilExitTitleUpdate:
 
         ctx = self._make_ctx()
 
-        stream._stream_until_exit(sample_config, mock_logger, ctx, first_attempt=False)
+        on_live = stream._make_title_updater(sample_config, mock_logger)
+        stream._stream_until_exit(sample_config, mock_logger, ctx, on_live=on_live)
+        stream._stream_until_exit(sample_config, mock_logger, ctx, on_live=on_live)
 
-        mock_title.assert_not_called()
+        mock_title.assert_called_once()
 
     @patch("stream.update_broadcast_title")
     @patch("stream.ensure_broadcast_live")
@@ -494,12 +497,132 @@ class TestStreamUntilExitTitleUpdate:
         mock_ensure.side_effect = simulate_new_broadcast
 
         ctx = self._make_ctx("bcast-old")
-        stream._stream_until_exit(sample_config, mock_logger, ctx, first_attempt=True)
+        on_live = stream._make_title_updater(sample_config, mock_logger)
+        stream._stream_until_exit(sample_config, mock_logger, ctx, on_live=on_live)
 
         title_call_args = mock_title.call_args
         assert title_call_args[0][1] == "bcast-fresh", (
             "update_broadcast_title should use the new broadcast ID, not bcast-old"
         )
+
+    @patch("stream.ensure_broadcast_live")
+    @patch("stream.wait_for_stream_active", return_value=True)
+    @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
+    @patch("stream.start_ffmpeg_process")
+    @patch("stream.build_ffmpeg_command", return_value=[])
+    def test_on_live_runs_after_ensure_live_and_before_ffmpeg_wait(
+        self, mock_cmd, mock_start, mock_relay, mock_wait, mock_ensure,
+        sample_config, mock_logger
+    ):
+        """on_live fires only after the broadcast is live, while ffmpeg is still running."""
+        events = []
+        mock_process = MagicMock()
+        mock_process.wait.side_effect = lambda: events.append("ffmpeg_exit")
+        mock_start.return_value = mock_process
+        mock_ensure.side_effect = lambda *a, **k: events.append("live")
+
+        ctx = self._make_ctx()
+        stream._stream_until_exit(
+            sample_config, mock_logger, ctx, on_live=lambda c: events.append(("on_live", c))
+        )
+
+        assert events == ["live", ("on_live", ctx), "ffmpeg_exit"]
+
+    @patch("stream.ensure_broadcast_live")
+    @patch("stream.wait_for_stream_active", return_value=False)
+    @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
+    @patch("stream.start_ffmpeg_process", return_value=MagicMock())
+    @patch("stream.build_ffmpeg_command", return_value=[])
+    def test_on_live_not_called_when_stream_never_active(
+        self, mock_cmd, mock_start, mock_relay, mock_wait, mock_ensure,
+        sample_config, mock_logger
+    ):
+        """A stream that never becomes active is not live — no title update."""
+        on_live = MagicMock()
+        with pytest.raises(RuntimeError):
+            stream._stream_until_exit(sample_config, mock_logger, self._make_ctx(), on_live=on_live)
+
+        on_live.assert_not_called()
+        mock_ensure.assert_not_called()
+
+    @patch("stream.is_stop_requested", return_value=True)
+    @patch("stream.wait_for_stream_active", return_value=False)
+    @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
+    @patch("stream.start_ffmpeg_process", return_value=MagicMock())
+    @patch("stream.build_ffmpeg_command", return_value=[])
+    def test_on_live_not_called_when_stopped_while_waiting(
+        self, mock_cmd, mock_start, mock_relay, mock_wait, mock_stop,
+        sample_config, mock_logger
+    ):
+        """A stop during the active-wait exits without a title update."""
+        on_live = MagicMock()
+        stream._stream_until_exit(sample_config, mock_logger, self._make_ctx(), on_live=on_live)
+
+        on_live.assert_not_called()
+
+    @patch("stream.ensure_broadcast_live", side_effect=RuntimeError("unexpected state"))
+    @patch("stream.wait_for_stream_active", return_value=True)
+    @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
+    @patch("stream.start_ffmpeg_process", return_value=MagicMock())
+    @patch("stream.build_ffmpeg_command", return_value=[])
+    def test_on_live_not_called_when_broadcast_cannot_go_live(
+        self, mock_cmd, mock_start, mock_relay, mock_wait, mock_ensure,
+        sample_config, mock_logger
+    ):
+        """If ensure_broadcast_live fails, the broadcast is not live — no title update."""
+        on_live = MagicMock()
+        with pytest.raises(RuntimeError, match="unexpected state"):
+            stream._stream_until_exit(sample_config, mock_logger, self._make_ctx(), on_live=on_live)
+
+        on_live.assert_not_called()
+
+    @patch("stream.ensure_broadcast_live")
+    @patch("stream.wait_for_stream_active", return_value=True)
+    @patch("stream.relay_ffmpeg_output", return_value=MagicMock())
+    @patch("stream.start_ffmpeg_process", return_value=MagicMock())
+    @patch("stream.build_ffmpeg_command", return_value=[])
+    def test_without_on_live_nothing_extra_happens(
+        self, mock_cmd, mock_start, mock_relay, mock_wait, mock_ensure,
+        sample_config, mock_logger
+    ):
+        """on_live is optional."""
+        with patch("stream.update_broadcast_title") as mock_title:
+            stream._stream_until_exit(sample_config, mock_logger, self._make_ctx())
+        mock_title.assert_not_called()
+
+
+# ── _make_title_updater ─────────────────────────────────────────────────────
+
+
+class TestMakeTitleUpdater:
+    def test_first_call_updates_title(self, sample_config, mock_logger):
+        ctx = MagicMock()
+        with patch("stream.update_broadcast_title") as mock_title:
+            stream._make_title_updater(sample_config, mock_logger)(ctx)
+        mock_title.assert_called_once_with(ctx.youtube, "bcast-123", sample_config, mock_logger)
+
+    def test_later_calls_are_no_ops(self, sample_config, mock_logger):
+        updater = stream._make_title_updater(sample_config, mock_logger)
+        with patch("stream.update_broadcast_title") as mock_title:
+            updater(MagicMock())
+            updater(MagicMock())
+            updater(MagicMock())
+        mock_title.assert_called_once()
+
+    def test_reads_broadcast_id_at_call_time(self, sample_config, mock_logger):
+        """A broadcast created after the updater was built is the one that gets titled."""
+        updater = stream._make_title_updater(sample_config, mock_logger)
+        sample_config["youtube"]["broadcastId"] = "bcast-created-later"
+        with patch("stream.update_broadcast_title") as mock_title:
+            updater(MagicMock())
+        assert mock_title.call_args[0][1] == "bcast-created-later"
+
+    def test_each_updater_has_its_own_state(self, sample_config, mock_logger):
+        """A new --start session (new updater) stamps the title again."""
+        with patch("stream.update_broadcast_title") as mock_title:
+            stream._make_title_updater(sample_config, mock_logger)(MagicMock())
+            stream._make_title_updater(sample_config, mock_logger)(MagicMock())
+        assert mock_title.call_count == 2
 
 
 # ── _prepare_stream_process ordering ────────────────────────────────────────
@@ -633,6 +756,105 @@ class TestRunStreamLoop:
         # Three calls: attempt 0 (primary), attempt 1 (backup), attempt 2 (primary)
         calls = mock_connect.call_args_list
         assert len(calls) == 3
+        assert [c.args[2] for c in calls] == [0, 1, 2]
+
+    def test_run_stream_loop_pre_launch_failure_keeps_primary_url(self, sample_config):
+        """A failure before ffmpeg launches (e.g. DNS) retries on the primary URL.
+
+        Regression: at boot, a DNS failure used up attempt 0, so the first
+        ffmpeg launch went to the backup URL.
+        """
+        with patch("stream._connect_to_broadcast",
+                   side_effect=[Exception("Unable to find the server"), MagicMock()]) as mock_connect, \
+             patch("stream._stream_until_exit"), \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, False]), \
+             patch("stream._cleanup_ffmpeg"), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        rtmp_attempts = [c.args[2] for c in mock_connect.call_args_list]
+        assert rtmp_attempts == [0, 0]
+
+    def test_run_stream_loop_alternates_after_ffmpeg_attempts(self, sample_config):
+        """Passes that reached ffmpeg advance the RTMP attempt; pre-launch failures don't."""
+        with patch("stream._connect_to_broadcast",
+                   side_effect=[Exception("dns"), MagicMock(), MagicMock(),
+                                Exception("dns"), MagicMock()]) as mock_connect, \
+             patch("stream._stream_until_exit"), \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, True, True, True, False]), \
+             patch("stream._cleanup_ffmpeg"), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        rtmp_attempts = [c.args[2] for c in mock_connect.call_args_list]
+        assert rtmp_attempts == [0, 0, 1, 2, 2]
+
+    def test_run_stream_loop_ffmpeg_failure_advances_rtmp_attempt(self, sample_config):
+        """A failure after connecting (ffmpeg ran) still alternates to the backup URL."""
+        with patch("stream._connect_to_broadcast") as mock_connect, \
+             patch("stream._stream_until_exit", side_effect=RuntimeError("Stream did not become active")), \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, False]), \
+             patch("stream._cleanup_ffmpeg"), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        rtmp_attempts = [c.args[2] for c in mock_connect.call_args_list]
+        assert rtmp_attempts == [0, 1]
+
+    def test_run_stream_loop_passes_same_title_updater_every_pass(self, sample_config):
+        """Every pass gets the same one-shot on_live updater."""
+        with patch("stream._connect_to_broadcast"), \
+             patch("stream._stream_until_exit") as mock_stream, \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, False]), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        updaters = [c.kwargs["on_live"] for c in mock_stream.call_args_list]
+        assert len(updaters) == 2
+        assert updaters[0] is updaters[1]
+        assert callable(updaters[0])
+
+    def test_title_updated_once_on_first_live_pass_after_boot_failures(self, sample_config):
+        """Regression (2026-09-23 boot): DNS failure, then an active-wait timeout,
+        then live — the title is stamped exactly once, on the pass that went live."""
+        ctx = MagicMock(spec=stream.BroadcastContext)
+        ctx.stream_id = "sid"
+        ctx.broadcast_id = "bcast-123"
+        ctx.youtube = MagicMock()
+        logger = MagicMock()
+
+        with patch("stream._connect_to_broadcast",
+                   side_effect=[Exception("Unable to find the server"), ctx, ctx, ctx]), \
+             patch("stream.build_ffmpeg_command", return_value=[]), \
+             patch("stream.start_ffmpeg_process", return_value=MagicMock()), \
+             patch("stream.relay_ffmpeg_output", return_value=MagicMock()), \
+             patch("stream.wait_for_stream_active", side_effect=[False, True, True]), \
+             patch("stream.ensure_broadcast_live") as mock_ensure, \
+             patch("stream.update_broadcast_title") as mock_title, \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, True, True, False]), \
+             patch("stream._cleanup_ffmpeg"), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, logger)
+
+        assert mock_ensure.call_count == 2
+        mock_title.assert_called_once_with(ctx.youtube, "bcast-123", sample_config, logger)
+
+    def test_title_not_updated_if_never_live(self, sample_config):
+        """If no pass ever gets the broadcast live, the title is never touched."""
+        with patch("stream._connect_to_broadcast", side_effect=Exception("dns")), \
+             patch("stream.update_broadcast_title") as mock_title, \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, True, False]), \
+             patch("stream._cleanup_ffmpeg"), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        mock_title.assert_not_called()
 
     def test_run_stream_loop_success(self, sample_config):
         """Single attempt succeeds; loop exits when stop is requested after pass."""
