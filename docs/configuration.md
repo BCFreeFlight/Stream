@@ -34,6 +34,7 @@ Every key is **read and acted on** by the script — there are no dead fields. E
 | `logLevel` | string | `info` | Persistent verbosity: `debug`, `info`, `warning`, `error` |
 | `retryDelaySecs` | integer | `5` | Seconds between retry attempts (also the interval between `--recover` network checks) |
 | `networkWaitSecs` | integer | `120` | Max seconds `--recover` waits at boot for the primary RTMP ingest host (from `youtube.streamURL`) to resolve before delegating to `--start`; if it expires, `--start` runs anyway |
+| `streamActiveTimeoutSecs` | integer | `120` | Seconds to wait for YouTube to report the stream as active after launching ffmpeg; on timeout the last ffmpeg output lines are logged at `WARN` and the attempt is retried |
 | `terminal` | string | *(auto-detected)* | Terminal emulator for the start cron job |
 
 ### `[google]`

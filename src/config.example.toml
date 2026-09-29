@@ -22,6 +22,9 @@ retryDelaySecs = 5
 # Max seconds --recover waits at boot for the network (DNS) before starting the stream
 networkWaitSecs = 120
 
+# Seconds to wait for YouTube to report the stream as active before retrying
+streamActiveTimeoutSecs = 120
+
 # Terminal emulator used by the start cron job (auto-detected)
 terminal = "gnome-terminal"
 

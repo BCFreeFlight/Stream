@@ -894,6 +894,83 @@ class TestStreamUntilExit:
         mock_process.wait.assert_called_once()
         mock_thread.join.assert_called_once_with(timeout=5)
 
+    def test_stream_until_exit_passes_configured_timeout(self, sample_config):
+        """streamActiveTimeoutSecs from config is passed to wait_for_stream_active."""
+        sample_config["streamActiveTimeoutSecs"] = 45
+        ctx = MagicMock(spec=stream.BroadcastContext)
+        ctx.stream_id = "sid"
+
+        with patch("stream.build_ffmpeg_command", return_value=[]), \
+             patch("stream.start_ffmpeg_process", return_value=MagicMock()), \
+             patch("stream.relay_ffmpeg_output", return_value=MagicMock()), \
+             patch("stream.ensure_broadcast_live"), \
+             patch("stream.wait_for_stream_active", return_value=True) as mock_wait:
+            stream._stream_until_exit(sample_config, MagicMock(), ctx)
+
+        mock_wait.assert_called_once_with(ctx.youtube, "sid", 45, ANY)
+
+    def test_stream_until_exit_timeout_logs_recent_ffmpeg_output(self, sample_config):
+        """On timeout, ffmpeg's buffered output is logged after ffmpeg has exited."""
+        ctx = MagicMock(spec=stream.BroadcastContext)
+        ctx.stream_id = "sid"
+        mock_process = MagicMock()
+        events = []
+        mock_process.wait.side_effect = lambda: events.append("ffmpeg_wait")
+
+        def fake_relay(process, logger, recent_lines):
+            recent_lines.extend(["Connection refused", "Error opening input"])
+            return MagicMock()
+
+        with patch("stream.build_ffmpeg_command", return_value=[]), \
+             patch("stream.start_ffmpeg_process", return_value=mock_process), \
+             patch("stream.relay_ffmpeg_output", side_effect=fake_relay), \
+             patch("stream.wait_for_stream_active", return_value=False), \
+             patch("stream.log_recent_ffmpeg_output",
+                   side_effect=lambda lines, lg: events.append(("tail", list(lines)))) as mock_tail:
+            with pytest.raises(RuntimeError, match="Stream did not become active"):
+                stream._stream_until_exit(sample_config, MagicMock(), ctx)
+
+        mock_tail.assert_called_once()
+        assert events == [
+            "ffmpeg_wait",
+            ("tail", ["Connection refused", "Error opening input"]),
+        ]
+
+    def test_stream_until_exit_timeout_buffer_is_bounded(self, sample_config):
+        """The buffer handed to the relay is bounded by FFMPEG_TAIL_LINES."""
+        ctx = MagicMock(spec=stream.BroadcastContext)
+        ctx.stream_id = "sid"
+        captured = {}
+
+        def fake_relay(process, logger, recent_lines):
+            captured["buffer"] = recent_lines
+            return MagicMock()
+
+        with patch("stream.build_ffmpeg_command", return_value=[]), \
+             patch("stream.start_ffmpeg_process", return_value=MagicMock()), \
+             patch("stream.relay_ffmpeg_output", side_effect=fake_relay), \
+             patch("stream.wait_for_stream_active", return_value=False), \
+             patch("stream.log_recent_ffmpeg_output"):
+            with pytest.raises(RuntimeError):
+                stream._stream_until_exit(sample_config, MagicMock(), ctx)
+
+        assert captured["buffer"].maxlen == stream.FFMPEG_TAIL_LINES
+
+    def test_stream_until_exit_stop_requested_skips_ffmpeg_tail(self, sample_config):
+        """A stop request during the wait exits quietly without dumping ffmpeg output."""
+        ctx = MagicMock(spec=stream.BroadcastContext)
+        ctx.stream_id = "sid"
+
+        with patch("stream.build_ffmpeg_command", return_value=[]), \
+             patch("stream.start_ffmpeg_process", return_value=MagicMock()), \
+             patch("stream.relay_ffmpeg_output", return_value=MagicMock()), \
+             patch("stream.wait_for_stream_active", return_value=False), \
+             patch("stream.is_stop_requested", return_value=True), \
+             patch("stream.log_recent_ffmpeg_output") as mock_tail:
+            stream._stream_until_exit(sample_config, MagicMock(), ctx)
+
+        mock_tail.assert_not_called()
+
     def test_stream_until_exit_empty_stream_id(self, sample_config):
         """Empty stream_id: 15-second sleep instead of polling YouTube."""
         mock_process = MagicMock()

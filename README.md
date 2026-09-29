@@ -100,6 +100,7 @@ All non-secret configuration. Created by `--install` beside the script. See [`co
 | `logRetentionDays` | integer | `15` | Days to keep log files |
 | `retryDelaySecs` | integer | `5` | Seconds between retries |
 | `networkWaitSecs` | integer | `120` | Max seconds `--recover` waits at boot for the network (DNS) before starting the stream |
+| `streamActiveTimeoutSecs` | integer | `120` | Seconds to wait for YouTube to report the stream active before retrying |
 | `terminal` | string | *(auto-detected)* | Terminal emulator for cron |
 | `cron.enabled` | boolean | `true` | If `false`, cron jobs are not registered during `--install` |
 | `cron.start` | string | `30 6 1-31 4-10 *` | Cron expression for daily start |

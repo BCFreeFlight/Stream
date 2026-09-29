@@ -80,7 +80,7 @@ import shutil
 import socket
 import threading
 import time
-from collections import namedtuple
+from collections import deque, namedtuple
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
@@ -115,6 +115,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 CRON_MARKER = "# bcfreeflight_stream"
 
+STREAM_POLL_INTERVAL_SECS = 5
+
+FFMPEG_TAIL_LINES = 20
+
 BroadcastContext = namedtuple(
     "BroadcastContext",
     ["youtube", "broadcast_id", "stream_id", "rtmp_url", "stream_key"],
@@ -144,6 +148,7 @@ CONFIG_COMMENTS = {
     "logLevel": '# Log verbosity: "debug", "info", "warning", or "error"',
     "retryDelaySecs": "# Seconds to wait between retry attempts when ffmpeg exits",
     "networkWaitSecs": "# Max seconds --recover waits at boot for the network (DNS) before starting the stream",
+    "streamActiveTimeoutSecs": "# Seconds to wait for YouTube to report the stream as active before retrying",
     "terminal": "# Terminal emulator used by the start cron job (auto-detected)",
     "[google]": "# Google OAuth 2.0 credentials — get these from the Cloud Console",
     "[stream]": "# RTSP camera source and ffmpeg codec settings",
@@ -173,6 +178,7 @@ CONFIG_DEFAULTS = {
     "logLevel": "info",
     "retryDelaySecs": 5,
     "networkWaitSecs": 120,
+    "streamActiveTimeoutSecs": 120,
     "terminal": "",
     "google": {
         "clientId": "",
@@ -828,18 +834,23 @@ def find_stream_by_key(youtube, stream_key, logger):
     return result[0] if result else None
 
 
-def wait_for_stream_active(youtube, stream_id, logger):
+def _stream_poll_count(timeout_secs):
+    """Return how many status polls fit in timeout_secs (always at least one)."""
+    return max(1, math.ceil(timeout_secs / STREAM_POLL_INTERVAL_SECS))
+
+
+def wait_for_stream_active(youtube, stream_id, timeout_secs, logger):
     """Poll until the stream status becomes 'active'. Returns True on success."""
-    logger.info(f"Waiting for stream {stream_id} to become active")
-    for _ in range(120):
+    logger.info(f"Waiting up to {timeout_secs}s for stream {stream_id} to become active")
+    for _ in range(_stream_poll_count(timeout_secs)):
         status = _api_get_stream_status(youtube, stream_id)
         logger.debug(f"Stream status: {status}")
         if status == "active":
             return True
         if _stop_requested:
             return False
-        time.sleep(5)
-    logger.warn("Timed out waiting for stream to become active")
+        time.sleep(STREAM_POLL_INTERVAL_SECS)
+    logger.warn(f"Timed out after {timeout_secs}s waiting for stream to become active")
     return False
 
 
@@ -1080,7 +1091,7 @@ def start_ffmpeg_process(cmd, logger):
     )
 
 
-def relay_ffmpeg_output(process, logger):
+def relay_ffmpeg_output(process, logger, recent_lines=None):
     """Spawn a daemon thread that streams ffmpeg stdout/stderr to the logger.
 
     The thread is started immediately so ffmpeg's output is captured while the
@@ -1088,12 +1099,17 @@ def relay_ffmpeg_output(process, logger):
     ffmpeg's stderr fills the pipe buffer (~64 KB) and ffmpeg blocks, hiding
     any error messages that would explain why the stream never goes active.
 
+    When recent_lines (a bounded deque) is given, every line is also appended
+    to it so the caller can report ffmpeg's latest output on failure.
+
     Returns the Thread handle so callers can join it after ffmpeg exits.
     """
 
     def _pump():
         for line in iter(process.stdout.readline, ""):
             stripped = line.rstrip()
+            if recent_lines is not None:
+                recent_lines.append(stripped)
             if "warning" in stripped.lower():
                 logger.warn(f"[ffmpeg] {stripped}")
             else:
@@ -1102,6 +1118,16 @@ def relay_ffmpeg_output(process, logger):
     thread = threading.Thread(target=_pump, name="ffmpeg-output", daemon=True)
     thread.start()
     return thread
+
+
+def log_recent_ffmpeg_output(recent_lines, logger):
+    """Log ffmpeg's most recent output at WARN so failures are diagnosable at any log level."""
+    if not recent_lines:
+        logger.warn("ffmpeg produced no output")
+        return
+    logger.warn(f"Last {len(recent_lines)} line(s) of ffmpeg output:")
+    for line in recent_lines:
+        logger.warn(f"[ffmpeg] {line}")
 
 
 # ── PID File Management ─────────────────────────────────────────────────────
@@ -1584,6 +1610,9 @@ def prompt_all_config_values(res, existing=None):
         "networkWaitSecs": _get_nested(
             ex, "networkWaitSecs", default=CONFIG_DEFAULTS["networkWaitSecs"]
         ),
+        "streamActiveTimeoutSecs": _get_nested(
+            ex, "streamActiveTimeoutSecs", default=CONFIG_DEFAULTS["streamActiveTimeoutSecs"]
+        ),
         "terminal": _get_nested(ex, "terminal", default="gnome-terminal"),
         "cron": {
             "enabled": cron_enabled,
@@ -1923,16 +1952,19 @@ def _stream_until_exit(config, logger, ctx, res=None, on_live=None):
     cmd = build_ffmpeg_command(config, ctx.rtmp_url, ctx.stream_key)
     process = start_ffmpeg_process(cmd, logger)
     _ffmpeg_process = process
-    output_thread = relay_ffmpeg_output(process, logger)
+    recent_lines = deque(maxlen=FFMPEG_TAIL_LINES)
+    output_thread = relay_ffmpeg_output(process, logger, recent_lines)
 
     if ctx.stream_id:
-        if not wait_for_stream_active(ctx.youtube, ctx.stream_id, logger):
+        timeout_secs = config["streamActiveTimeoutSecs"]
+        if not wait_for_stream_active(ctx.youtube, ctx.stream_id, timeout_secs, logger):
             process.terminate()
             process.wait()
             output_thread.join(timeout=5)
             _ffmpeg_process = None
             if is_stop_requested(config):
                 return
+            log_recent_ffmpeg_output(recent_lines, logger)
             raise RuntimeError("Stream did not become active")
     else:
         logger.debug("Stream ID unavailable — waiting for ffmpeg to establish connection")

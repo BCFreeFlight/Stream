@@ -225,6 +225,44 @@ class TestRelayFfmpegOutput:
         warn_messages = [call[0][0] for call in mock_logger.warn.call_args_list]
         assert any("warning" in m.lower() for m in warn_messages)
 
+    def test_relay_ffmpeg_output_records_recent_lines(self, stream, mock_logger):
+        """Every line (warning or not) is appended to the recent_lines buffer."""
+        from collections import deque
+
+        mock_process = MagicMock()
+        mock_process.stdout.readline.side_effect = [
+            "line1\n", "  WARNING: something\n", "line3\n", "",
+        ]
+        recent = deque(maxlen=10)
+
+        thread = stream.relay_ffmpeg_output(mock_process, mock_logger, recent)
+        thread.join(timeout=2)
+
+        assert list(recent) == ["line1", "  WARNING: something", "line3"]
+
+    def test_relay_ffmpeg_output_recent_lines_bounded(self, stream, mock_logger):
+        """The buffer keeps only the most recent maxlen lines."""
+        from collections import deque
+
+        mock_process = MagicMock()
+        mock_process.stdout.readline.side_effect = [f"l{i}\n" for i in range(5)] + [""]
+        recent = deque(maxlen=2)
+
+        thread = stream.relay_ffmpeg_output(mock_process, mock_logger, recent)
+        thread.join(timeout=2)
+
+        assert list(recent) == ["l3", "l4"]
+
+    def test_relay_ffmpeg_output_without_buffer_still_logs(self, stream, mock_logger):
+        """Omitting recent_lines keeps the original logging behavior."""
+        mock_process = MagicMock()
+        mock_process.stdout.readline.side_effect = ["line1\n", ""]
+
+        thread = stream.relay_ffmpeg_output(mock_process, mock_logger)
+        thread.join(timeout=2)
+
+        mock_logger.debug.assert_called_once_with("[ffmpeg] line1")
+
     def test_relay_ffmpeg_output_returns_daemon_thread(self, stream, mock_logger):
         """Relay runs in a background daemon thread so it cannot block shutdown."""
         import threading
@@ -263,3 +301,34 @@ class TestRelayFfmpegOutput:
 
         logged = [call[0][0] for call in mock_logger.debug.call_args_list]
         assert "[ffmpeg] early-line" in logged
+
+
+# ── log_recent_ffmpeg_output ────────────────────────────────────────────────
+
+
+class TestLogRecentFfmpegOutput:
+    def test_logs_each_line_at_warn(self, stream, mock_logger):
+        """A header plus every buffered line is logged at WARN with the [ffmpeg] prefix."""
+        stream.log_recent_ffmpeg_output(["a", "b"], mock_logger)
+
+        warnings = [c[0][0] for c in mock_logger.warn.call_args_list]
+        assert warnings == [
+            "Last 2 line(s) of ffmpeg output:",
+            "[ffmpeg] a",
+            "[ffmpeg] b",
+        ]
+        mock_logger.info.assert_not_called()
+        mock_logger.debug.assert_not_called()
+
+    def test_empty_buffer_says_no_output(self, stream, mock_logger):
+        """An empty buffer is reported explicitly rather than silently."""
+        from collections import deque
+
+        stream.log_recent_ffmpeg_output(deque(), mock_logger)
+
+        mock_logger.warn.assert_called_once_with("ffmpeg produced no output")
+
+    def test_tail_length_constant(self, stream):
+        """The tail buffer size is a positive constant."""
+        assert isinstance(stream.FFMPEG_TAIL_LINES, int)
+        assert stream.FFMPEG_TAIL_LINES > 0

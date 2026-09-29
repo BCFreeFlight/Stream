@@ -665,8 +665,9 @@ class TestHighLevelOrchestration:
     ):
         """Returns True when the stream is active on the first poll."""
         mock_status.return_value = "active"
-        result = stream.wait_for_stream_active(MagicMock(), "sid", mock_logger)
+        result = stream.wait_for_stream_active(MagicMock(), "sid", 120, mock_logger)
         assert result is True
+        mock_sleep.assert_not_called()
 
     @patch("time.sleep")
     @patch("stream._api_get_stream_status")
@@ -676,8 +677,47 @@ class TestHighLevelOrchestration:
         """Returns False when _stop_requested is set."""
         mock_status.return_value = "inactive"
         stream._stop_requested = True
-        result = stream.wait_for_stream_active(MagicMock(), "sid", mock_logger)
+        result = stream.wait_for_stream_active(MagicMock(), "sid", 120, mock_logger)
         assert result is False
+        mock_status.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "timeout_secs, expected_polls",
+        [(120, 24), (600, 120), (5, 1), (7, 2), (1, 1), (0, 1), (-10, 1)],
+    )
+    @patch("time.sleep")
+    @patch("stream._api_get_stream_status", return_value="inactive")
+    def test_wait_for_stream_active_poll_count_follows_timeout(
+        self, mock_status, mock_sleep, timeout_secs, expected_polls, mock_logger
+    ):
+        """Polls ceil(timeout / interval) times — always at least once — then gives up."""
+        result = stream.wait_for_stream_active(MagicMock(), "sid", timeout_secs, mock_logger)
+        assert result is False
+        assert mock_status.call_count == expected_polls
+        assert mock_sleep.call_count == expected_polls
+        mock_sleep.assert_called_with(stream.STREAM_POLL_INTERVAL_SECS)
+
+    @patch("time.sleep")
+    @patch("stream._api_get_stream_status", return_value="inactive")
+    def test_wait_for_stream_active_timeout_logs_warning_with_duration(
+        self, mock_status, mock_sleep, mock_logger
+    ):
+        """The timeout warning names the configured duration."""
+        stream.wait_for_stream_active(MagicMock(), "sid", 120, mock_logger)
+        warnings = [c[0][0] for c in mock_logger.warn.call_args_list]
+        assert warnings == ["Timed out after 120s waiting for stream to become active"]
+
+    @patch("time.sleep")
+    @patch("stream._api_get_stream_status")
+    def test_wait_for_stream_active_becomes_active_later(
+        self, mock_status, mock_sleep, mock_logger
+    ):
+        """Returns True as soon as a later poll reports active."""
+        mock_status.side_effect = ["inactive", "inactive", "active"]
+        result = stream.wait_for_stream_active(MagicMock(), "sid", 120, mock_logger)
+        assert result is True
+        assert mock_status.call_count == 3
+        mock_logger.warn.assert_not_called()
 
     # -- transition_to_live --------------------------------------------------
 
