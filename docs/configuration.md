@@ -33,6 +33,7 @@ Every key is **read and acted on** by the script — there are no dead fields. E
 | `logRetentionDays` | integer | `15` | Delete logs older than this many days (pruned on `--start`) |
 | `logLevel` | string | `info` | Persistent verbosity: `debug`, `info`, `warning`, `error` |
 | `retryDelaySecs` | integer | `5` | Seconds between retry attempts |
+| `streamActiveTimeoutSecs` | integer | `120` | Seconds to wait for YouTube to report the stream as active after launching ffmpeg; on timeout the last ffmpeg output lines are logged at `WARN` and the attempt is retried |
 | `terminal` | string | *(auto-detected)* | Terminal emulator for the start cron job |
 
 ### `[google]`

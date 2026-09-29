@@ -49,6 +49,7 @@ All Python packages are self-installed by `stream.py` on first run. No `requirem
 | `logLevel` | string | `"info"` | Log verbosity: `debug`, `info`, `warning`, or `error`. Can be overridden per-run with `--log-level`. |
 | `youtube.enableDvr` | boolean | `false` | Allow viewers to rewind the live stream; `false` disables DVR scrubbing |
 | `youtube.archivePrivacy` | string | `"private"` | Privacy applied to the archived video immediately after `--stop` (`public`, `unlisted`, or `private`) |
+| `streamActiveTimeoutSecs` | integer | `120` | Seconds to wait for YouTube to report the stream as active before retrying (previously a fixed ~10 minutes) |
 
 Existing installs receive these keys automatically (with defaults) the first time `--start` or `--update` is run after upgrading.
 

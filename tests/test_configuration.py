@@ -371,6 +371,30 @@ class TestMigrateConfig:
         assert result["youtube"]["backupStreamUrl"] == stream.CONFIG_DEFAULTS["youtube"]["backupStreamUrl"]
         assert "migrated" in capsys.readouterr().out
 
+    def test_adds_stream_active_timeout_to_released_config(self, tmp_script_dir, sample_config):
+        """A config.toml from a release without streamActiveTimeoutSecs gains the default."""
+        del sample_config["streamActiveTimeoutSecs"]
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        result = stream.load_config()
+        assert result["streamActiveTimeoutSecs"] == 120
+        assert "# Seconds to wait for YouTube to report the stream as active" in config_path.read_text()
+
+    def test_keeps_user_stream_active_timeout(self, tmp_script_dir, sample_config):
+        """A user-set streamActiveTimeoutSecs is never overwritten by migration."""
+        sample_config["streamActiveTimeoutSecs"] = 300
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        assert stream.load_config()["streamActiveTimeoutSecs"] == 300
+
     def test_preserves_user_values_when_migrating(self, tmp_script_dir, sample_config):
         """Existing user values are never overwritten during migration."""
         del sample_config["retryDelaySecs"]
@@ -449,6 +473,11 @@ class TestSetConfigProperty:
         """A dot-notation key navigates into a nested section."""
         stream._set_config_property(sample_config, "cron.autoUpdate", "true")
         assert sample_config["cron"]["autoUpdate"] is True
+
+    def test_sets_stream_active_timeout(self, sample_config):
+        """streamActiveTimeoutSecs is settable via --set-property and coerced to int."""
+        stream._set_config_property(sample_config, "streamActiveTimeoutSecs", "90")
+        assert sample_config["streamActiveTimeoutSecs"] == 90
 
     def test_sets_int_key(self, sample_config):
         """An int-typed key is coerced from string to int."""

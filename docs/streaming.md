@@ -74,4 +74,4 @@ flowchart TD
 
 ## Stream activation
 
-After launching ffmpeg, the script polls `liveStreams.list` until `streamStatus == active` (up to ~10 min) before transitioning the broadcast live. If the stream ID can't be resolved from the key, it falls back to a fixed 15 s wait.
+After launching ffmpeg, the script polls `liveStreams.list` every 5 s until `streamStatus == active` (up to `streamActiveTimeoutSecs`, default 120 s) before transitioning the broadcast live. On timeout, ffmpeg is stopped, its last lines of output (kept in a small in-memory buffer by the output relay) are logged at `warn` so the cause is visible at the default log level, and the attempt is retried. If the stream ID can't be resolved from the key, it falls back to a fixed 15 s wait.

@@ -19,7 +19,8 @@ Run any command with `--log-level debug` for full detail.
 | Cause | Fix |
 |-------|-----|
 | Muted video-only stream | Muting injects a silent AAC track automatically; ensure you're on a current version ([ADR-0011](adr/0011-silent-audio-when-muted.md)) |
-| RTSP unreachable | Verify the camera URL and that the host can reach it; check `[ffmpeg]` debug lines |
+| RTSP unreachable | Verify the camera URL and that the host can reach it; on a timeout the last `[ffmpeg]` lines are logged at `WARN` — or use `--log-level debug` for the full output |
+| Timed out waiting for stream to become active | Raise `streamActiveTimeoutSecs` if your connection is slow to start ingesting; check the `[ffmpeg]` lines logged right after the timeout |
 | Wrong RTSP credentials | Special characters are auto-encoded at install; re-run `--install` if you changed the password |
 | Stream key mismatch | The stream ID is resolved from the key at runtime; re-run `--install` to repair |
 

@@ -101,6 +101,7 @@ logDir = "./logs"
 logRetentionDays = 15
 logLevel = "info"
 retryDelaySecs = 5
+streamActiveTimeoutSecs = 120
 terminal = "gnome-terminal"
 
 [google]
@@ -230,7 +231,7 @@ The stream resource (RTMP URL and stream key) is created **once** during `--inst
 3. Retire the current broadcast — if the configured broadcast is in any active state (`live`, `testing`, `ready`, `created`), transition it to `complete`
 4. Update the broadcast title with today's date via `liveBroadcasts.update` (first attempt only)
 5. Launch ffmpeg pointing at the RTMP URL
-6. Wait for stream to become active
+6. Wait for stream to become active (up to `streamActiveTimeoutSecs`; on timeout, the last lines of ffmpeg output are logged at `WARN` and the attempt is retried)
 7. Ensure broadcast is live — check the current lifecycle state:
    - `complete`: create a new broadcast, bind the existing stream, update `broadcastId` in `config.toml`, then transition to `live`
    - `ready` or `created`: transition `ready` → `testing` → `live`
