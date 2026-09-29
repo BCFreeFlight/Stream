@@ -73,9 +73,11 @@ _ensure_dependencies()
 import argparse
 import datetime
 import json
+import math
 import os
 import signal
 import shutil
+import socket
 import threading
 import time
 from collections import namedtuple
@@ -141,6 +143,7 @@ CONFIG_COMMENTS = {
     "logRetentionDays": "# Delete log files older than this many days",
     "logLevel": '# Log verbosity: "debug", "info", "warning", or "error"',
     "retryDelaySecs": "# Seconds to wait between retry attempts when ffmpeg exits",
+    "networkWaitSecs": "# Max seconds --recover waits at boot for the network (DNS) before starting the stream",
     "terminal": "# Terminal emulator used by the start cron job (auto-detected)",
     "[google]": "# Google OAuth 2.0 credentials — get these from the Cloud Console",
     "[stream]": "# RTSP camera source and ffmpeg codec settings",
@@ -169,6 +172,7 @@ CONFIG_DEFAULTS = {
     "logRetentionDays": 15,
     "logLevel": "info",
     "retryDelaySecs": 5,
+    "networkWaitSecs": 120,
     "terminal": "",
     "google": {
         "clientId": "",
@@ -1569,6 +1573,9 @@ def prompt_all_config_values(res, existing=None):
         "logDir": _get_nested(ex, "logDir", default="./logs"),
         "logRetentionDays": _get_nested(ex, "logRetentionDays", default=15),
         "retryDelaySecs": _get_nested(ex, "retryDelaySecs", default=5),
+        "networkWaitSecs": _get_nested(
+            ex, "networkWaitSecs", default=CONFIG_DEFAULTS["networkWaitSecs"]
+        ),
         "terminal": _get_nested(ex, "terminal", default="gnome-terminal"),
         "cron": {
             "enabled": cron_enabled,
@@ -1943,12 +1950,21 @@ def _wait_before_retry(config, logger):
 
 
 def _run_stream_loop(config, logger, res=None):
-    """Retry loop: connect to broadcast, stream until exit, retry on failure."""
+    """Retry loop: connect to broadcast, stream until exit, retry on failure.
+
+    ``attempt`` counts every pass through the loop. ``rtmp_attempt`` selects the
+    primary/backup RTMP URL and only advances once a pass has got as far as
+    launching ffmpeg — a failure before that (DNS, auth, API) says nothing
+    about the ingest endpoint, so the next pass retries the same URL.
+    """
     attempt = 0
+    rtmp_attempt = 0
 
     while True:
+        connected = False
         try:
-            ctx = _connect_to_broadcast(config, logger, attempt)
+            ctx = _connect_to_broadcast(config, logger, rtmp_attempt)
+            connected = True
 
             if is_stop_requested(config):
                 break
@@ -1964,6 +1980,8 @@ def _run_stream_loop(config, logger, res=None):
             break
 
         attempt += 1
+        if connected:
+            rtmp_attempt += 1
 
 
 def _perform_shutdown(config, logger):
@@ -2137,6 +2155,51 @@ def is_in_stream_window(config, now=None):
     return last_start > last_stop
 
 
+def _network_probe_host(config):
+    """Return the hostname of the primary RTMP ingest URL, or None if unavailable."""
+    return urlsplit(config["youtube"].get("streamURL", "")).hostname
+
+
+def _host_resolves(host):
+    """Return True if DNS can resolve host."""
+    try:
+        socket.getaddrinfo(host, None)
+        return True
+    except OSError:
+        return False
+
+
+def wait_for_network(config, logger):
+    """Block until the RTMP ingest host resolves, up to networkWaitSecs.
+
+    At boot, the @reboot cron entry can fire before networking/DNS is up, which
+    makes every YouTube call in --start fail. Checks every retryDelaySecs.
+    Returns True once the host resolves, False if the wait expired (the caller
+    carries on regardless — the retry loop still applies).
+    """
+    host = _network_probe_host(config)
+    if not host:
+        logger.debug("No RTMP ingest host configured — skipping network wait")
+        return True
+
+    wait_secs = config["networkWaitSecs"]
+    interval = max(1, config["retryDelaySecs"])
+    checks = max(1, math.ceil(wait_secs / interval))
+
+    for check in range(checks):
+        if _host_resolves(host):
+            if check:
+                logger.info(f"Network is up ({host} resolves)")
+            return True
+        if check == 0:
+            logger.info(f"Waiting up to {wait_secs}s for the network ({host} does not resolve yet)")
+        if check < checks - 1:
+            time.sleep(interval)
+
+    logger.warn(f"Network still unavailable after {wait_secs}s — starting stream anyway")
+    return False
+
+
 def _stream_process_already_running(config):
     """Return True if a live stream process is already recorded in the PID file."""
     pid = read_pid_file(config)
@@ -2149,7 +2212,9 @@ def do_recover(level_override=None):
     Intended to be run at boot (via @reboot cron) so that a power loss or
     reboot during the streaming window automatically resumes the stream.
     If outside the window, or if a stream is already running, exits cleanly.
+    Inside the window, waits for the network before delegating to --start.
     """
+    _migrate_config()
     config = load_config()
     load_env()
     logger = create_logger(config, level_override)
@@ -2166,6 +2231,7 @@ def do_recover(level_override=None):
         logger.close()
         return
 
+    wait_for_network(config, logger)
     logger.info("Inside stream window — starting stream")
     logger.close()
     do_start(level_override)

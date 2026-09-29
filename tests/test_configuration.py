@@ -371,6 +371,30 @@ class TestMigrateConfig:
         assert result["youtube"]["backupStreamUrl"] == stream.CONFIG_DEFAULTS["youtube"]["backupStreamUrl"]
         assert "migrated" in capsys.readouterr().out
 
+    def test_adds_network_wait_to_released_config(self, tmp_script_dir, sample_config):
+        """A config.toml from a release without networkWaitSecs gains the default."""
+        del sample_config["networkWaitSecs"]
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        result = stream.load_config()
+        assert result["networkWaitSecs"] == 120
+        assert "# Max seconds --recover waits at boot for the network" in config_path.read_text()
+
+    def test_keeps_user_network_wait(self, tmp_script_dir, sample_config):
+        """A user-set networkWaitSecs is never overwritten by migration."""
+        sample_config["networkWaitSecs"] = 30
+        config_path = tmp_script_dir / "config.toml"
+        with open(config_path, "wb") as fh:
+            tomli_w.dump(sample_config, fh)
+
+        stream._migrate_config()
+
+        assert stream.load_config()["networkWaitSecs"] == 30
+
     def test_preserves_user_values_when_migrating(self, tmp_script_dir, sample_config):
         """Existing user values are never overwritten during migration."""
         del sample_config["retryDelaySecs"]
@@ -449,6 +473,11 @@ class TestSetConfigProperty:
         """A dot-notation key navigates into a nested section."""
         stream._set_config_property(sample_config, "cron.autoUpdate", "true")
         assert sample_config["cron"]["autoUpdate"] is True
+
+    def test_sets_network_wait(self, sample_config):
+        """networkWaitSecs is settable via --set-property and coerced to int."""
+        stream._set_config_property(sample_config, "networkWaitSecs", "60")
+        assert sample_config["networkWaitSecs"] == 60
 
     def test_sets_int_key(self, sample_config):
         """An int-typed key is coerced from string to int."""

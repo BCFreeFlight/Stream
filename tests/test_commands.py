@@ -602,6 +602,65 @@ class TestRunStreamLoop:
         # Three calls: attempt 0 (primary), attempt 1 (backup), attempt 2 (primary)
         calls = mock_connect.call_args_list
         assert len(calls) == 3
+        assert [c.args[2] for c in calls] == [0, 1, 2]
+
+    def test_run_stream_loop_pre_launch_failure_keeps_primary_url(self, sample_config):
+        """A failure before ffmpeg launches (e.g. DNS) retries on the primary URL.
+
+        Regression: at boot, a DNS failure used up attempt 0, so the first
+        ffmpeg launch went to the backup URL.
+        """
+        with patch("stream._connect_to_broadcast",
+                   side_effect=[Exception("Unable to find the server"), MagicMock()]) as mock_connect, \
+             patch("stream._stream_until_exit"), \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, False]), \
+             patch("stream._cleanup_ffmpeg"), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        rtmp_attempts = [c.args[2] for c in mock_connect.call_args_list]
+        assert rtmp_attempts == [0, 0]
+
+    def test_run_stream_loop_alternates_after_ffmpeg_attempts(self, sample_config):
+        """Passes that reached ffmpeg advance the RTMP attempt; pre-launch failures don't."""
+        with patch("stream._connect_to_broadcast",
+                   side_effect=[Exception("dns"), MagicMock(), MagicMock(),
+                                Exception("dns"), MagicMock()]) as mock_connect, \
+             patch("stream._stream_until_exit"), \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, True, True, True, False]), \
+             patch("stream._cleanup_ffmpeg"), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        rtmp_attempts = [c.args[2] for c in mock_connect.call_args_list]
+        assert rtmp_attempts == [0, 0, 1, 2, 2]
+
+    def test_run_stream_loop_ffmpeg_failure_advances_rtmp_attempt(self, sample_config):
+        """A failure after connecting (ffmpeg ran) still alternates to the backup URL."""
+        with patch("stream._connect_to_broadcast") as mock_connect, \
+             patch("stream._stream_until_exit", side_effect=RuntimeError("Stream did not become active")), \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, False]), \
+             patch("stream._cleanup_ffmpeg"), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        rtmp_attempts = [c.args[2] for c in mock_connect.call_args_list]
+        assert rtmp_attempts == [0, 1]
+
+    def test_run_stream_loop_first_attempt_flag_unchanged(self, sample_config):
+        """first_attempt is still True only on the loop's very first pass."""
+        with patch("stream._connect_to_broadcast"), \
+             patch("stream._stream_until_exit") as mock_stream, \
+             patch("stream.is_stop_requested", return_value=False), \
+             patch("stream._wait_before_retry", side_effect=[True, False]), \
+             patch.object(stream.time, "sleep"):
+            stream._run_stream_loop(sample_config, MagicMock())
+
+        flags = [c.kwargs["first_attempt"] for c in mock_stream.call_args_list]
+        assert flags == [True, False]
 
     def test_run_stream_loop_success(self, sample_config):
         """Single attempt succeeds; loop exits when stop is requested after pass."""

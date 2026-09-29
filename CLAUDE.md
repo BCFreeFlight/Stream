@@ -101,6 +101,7 @@ logDir = "./logs"
 logRetentionDays = 15
 logLevel = "info"
 retryDelaySecs = 5
+networkWaitSecs = 120
 terminal = "gnome-terminal"
 
 [google]
@@ -164,7 +165,7 @@ The script exposes exactly three switches. Do not add, rename, or remove switche
 | `--reinstall` | Destructive clean-slate setup. Prompts for `yes` confirmation, then chains `--uninstall` → delete `config.toml` + `.env` → `--install`. `logs/` and `backup/` are preserved. |
 | `--start` | Retires any active broadcast, creates a fresh one, and starts streaming. Runs in the foreground, blocking the terminal. |
 | `--stop` | Writes the stop sentinel, signals the running process, waits for graceful shutdown, and transitions the broadcast to `complete` so it is archived as a VOD. |
-| `--recover` | Crash-recovery. If the current time falls inside the daily `cron.start`/`cron.stop` window (and no stream is already running), delegates to `--start`. Otherwise exits cleanly. Registered as an `@reboot` cron entry by `--install`. |
+| `--recover` | Crash-recovery. If the current time falls inside the daily `cron.start`/`cron.stop` window (and no stream is already running), waits up to `networkWaitSecs` for the RTMP ingest host to resolve (DNS), then delegates to `--start`. Otherwise exits cleanly. Registered as an `@reboot` cron entry by `--install`. |
 | `--update` | Backs up `stream.py`, `resources.toml`, and `config.toml` to a versioned zip in `backup/`, downloads the latest release from GitHub, and replaces `stream.py` and `resources.toml`. Then re-registers cron entries from the current `config.toml`, so any manually-edited `cron.start` / `cron.stop` values are applied automatically. |
 | `--roll-back [VERSION]` | Restores `stream.py`, `resources.toml`, and `config.toml` from a backup. Without a version, lists available backups interactively. |
 | `--set-property KEY VALUE` | Sets a single `config.toml` value by dot-notation key (e.g. `cron.autoUpdate true`). Can be repeated for multiple properties in one invocation. Keys are validated against `CONFIG_DEFAULTS`; unknown keys and section names are rejected. |
@@ -243,7 +244,7 @@ The stream resource (RTMP URL and stream key) is created **once** during `--inst
 
 ### Retry behavior:
 - On retry, the script reconnects to the **same** broadcast created at startup — it does not create a new one
-- Retries alternate between the primary `streamURL` and `backupStreamUrl` (if configured)
+- Retries alternate between the primary `streamURL` and `backupStreamUrl` (if configured). The alternation only advances after an attempt that got as far as launching ffmpeg — a failure before that (DNS, auth, API) retries the same URL
 
 ---
 
@@ -303,7 +304,7 @@ The start cron opens a single terminal window. When the stop cron fires, the str
 
 `--install` must not create duplicate crontab entries if run more than once.
 
-When `--start` or `--update` is run, `_migrate_config()` deep-merges `CONFIG_DEFAULTS` against the existing `config.toml` and writes back any keys that are absent. This is the general migration mechanism — adding a new config key to `CONFIG_DEFAULTS` is sufficient to backfill it on all existing installs without a separate migration function.
+When `--start`, `--recover` or `--update` is run, `_migrate_config()` deep-merges `CONFIG_DEFAULTS` against the existing `config.toml` and writes back any keys that are absent. This is the general migration mechanism — adding a new config key to `CONFIG_DEFAULTS` is sufficient to backfill it on all existing installs without a separate migration function.
 
 ---
 
