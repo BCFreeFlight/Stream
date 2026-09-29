@@ -1,6 +1,7 @@
 """Tests for _validate_youtube_config, _connect_to_broadcast, main() dispatch,
 do_start/do_stop orchestration."""
 
+import os
 import signal
 
 import pytest
@@ -643,7 +644,37 @@ class TestPrepareStreamProcessOrdering:
              patch.object(mock_logger, "cleanup_old_logs", side_effect=track("logs")):
             stream._prepare_stream_process(sample_config, mock_logger)
 
-        assert call_order == ["cleanup_stop", "kill", "pid", "logs"]
+        assert call_order == ["kill", "cleanup_stop", "pid", "logs"]
+
+    def test_sentinel_written_by_killed_process_is_cleared(
+        self, sample_config, tmp_script_dir, mock_logger
+    ):
+        """A sentinel the old process writes while being killed must not survive.
+
+        The old --start process's SIGTERM handler writes the stop sentinel as it
+        exits. If that sentinel survived, the new process would stop as soon as
+        it reached the retry loop.
+        """
+        def old_process_writes_sentinel(config, logger):
+            stream.write_stop_sentinel(config)
+
+        with patch("stream.kill_existing_process", side_effect=old_process_writes_sentinel):
+            stream._prepare_stream_process(sample_config, mock_logger)
+
+        assert not stream.stop_sentinel_exists(sample_config)
+        assert stream.is_stop_requested(sample_config) is False
+        assert stream.read_pid_file(sample_config) == os.getpid()
+
+    def test_stale_sentinel_without_running_process_is_cleared(
+        self, sample_config, tmp_script_dir, mock_logger
+    ):
+        """A sentinel left over from an earlier --stop is still removed."""
+        stream.write_stop_sentinel(sample_config)
+
+        with patch("stream.kill_existing_process"):
+            stream._prepare_stream_process(sample_config, mock_logger)
+
+        assert not stream.stop_sentinel_exists(sample_config)
 
 
 # ── _cleanup_ffmpeg ─────────────────────────────────────────────────────────

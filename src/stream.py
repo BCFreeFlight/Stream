@@ -1856,9 +1856,14 @@ def do_reinstall():
 
 
 def _prepare_stream_process(config, logger):
-    """Clean up previous state, kill any running process, write PID, prune old logs."""
-    cleanup_stop_sentinel(config)
+    """Kill any running process, clear the stop sentinel, write PID, prune old logs.
+
+    The sentinel is cleared *after* the old process is killed: its SIGTERM
+    handler writes the sentinel on the way out, which would otherwise make this
+    new process stop as soon as it reaches the retry loop.
+    """
     kill_existing_process(config, logger)
+    cleanup_stop_sentinel(config)
     write_pid_file(config)
     logger.cleanup_old_logs()
 
