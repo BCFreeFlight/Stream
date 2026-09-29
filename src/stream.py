@@ -1898,8 +1898,13 @@ def _connect_to_broadcast(config, logger, attempt_number=0):
     return BroadcastContext(youtube, broadcast_id, stream_id, rtmp_url, stream_key)
 
 
-def _stream_until_exit(config, logger, ctx, res=None, first_attempt=False):
-    """Launch ffmpeg, ensure the broadcast is live, then relay output until exit."""
+def _stream_until_exit(config, logger, ctx, res=None, on_live=None):
+    """Launch ffmpeg, ensure the broadcast is live, then relay output until exit.
+
+    on_live(ctx), if given, is called once the broadcast is confirmed live and
+    before blocking on ffmpeg — it is never called when the stream fails to
+    become active or the broadcast cannot be taken live.
+    """
     global _ffmpeg_process
 
     cmd = build_ffmpeg_command(config, ctx.rtmp_url, ctx.stream_key)
@@ -1922,9 +1927,8 @@ def _stream_until_exit(config, logger, ctx, res=None, first_attempt=False):
 
     ensure_broadcast_live(ctx.youtube, ctx.broadcast_id, config, logger, res)
 
-    if first_attempt:
-        live_broadcast_id = config["youtube"]["broadcastId"]
-        update_broadcast_title(ctx.youtube, live_broadcast_id, config, logger)
+    if on_live:
+        on_live(ctx)
 
     process.wait()
     output_thread.join(timeout=5)
@@ -1949,16 +1953,37 @@ def _wait_before_retry(config, logger):
     return not is_stop_requested(config)
 
 
+def _make_title_updater(config, logger):
+    """Return an on_live callback that stamps today's title once per session.
+
+    The title is updated the first time the broadcast is actually live —
+    whichever retry attempt that is — and never again on later reconnects.
+    The broadcast ID is read from config at call time because
+    ensure_broadcast_live may have just created a fresh broadcast.
+    """
+    state = {"done": False}
+
+    def _update_title_once(ctx):
+        if state["done"]:
+            return
+        state["done"] = True
+        live_broadcast_id = config["youtube"]["broadcastId"]
+        update_broadcast_title(ctx.youtube, live_broadcast_id, config, logger)
+
+    return _update_title_once
+
+
 def _run_stream_loop(config, logger, res=None):
     """Retry loop: connect to broadcast, stream until exit, retry on failure.
 
-    ``attempt`` counts every pass through the loop. ``rtmp_attempt`` selects the
-    primary/backup RTMP URL and only advances once a pass has got as far as
-    launching ffmpeg — a failure before that (DNS, auth, API) says nothing
-    about the ingest endpoint, so the next pass retries the same URL.
+    ``rtmp_attempt`` selects the primary/backup RTMP URL and only advances once
+    a pass has got as far as launching ffmpeg — a failure before that (DNS,
+    auth, API) says nothing about the ingest endpoint, so the next pass
+    retries the same URL. The broadcast title is stamped the first time the
+    broadcast is actually live, on whichever pass that happens.
     """
-    attempt = 0
     rtmp_attempt = 0
+    update_title_once = _make_title_updater(config, logger)
 
     while True:
         connected = False
@@ -1969,7 +1994,7 @@ def _run_stream_loop(config, logger, res=None):
             if is_stop_requested(config):
                 break
 
-            _stream_until_exit(config, logger, ctx, res, first_attempt=(attempt == 0))
+            _stream_until_exit(config, logger, ctx, res, on_live=update_title_once)
         except Exception as exc:
             logger.warn(f"Streaming error: {exc}")
             _cleanup_ffmpeg()
@@ -1979,7 +2004,6 @@ def _run_stream_loop(config, logger, res=None):
         if not _wait_before_retry(config, logger):
             break
 
-        attempt += 1
         if connected:
             rtmp_attempt += 1
 
