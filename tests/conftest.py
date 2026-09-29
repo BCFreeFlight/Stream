@@ -131,6 +131,7 @@ def sample_config():
         "logRetentionDays": 15,
         "logLevel": "info",
         "retryDelaySecs": 5,
+        "networkWaitSecs": 120,
         "terminal": "gnome-terminal",
         "cron": {
             "enabled": True,
